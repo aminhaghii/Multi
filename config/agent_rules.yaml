@@ -1,0 +1,69 @@
+# Agent Rules Configuration
+# Defines behavioral rules and boundaries
+
+rules:
+  global:
+    - name: "safety_first"
+      description: "Agent must never perform actions that could harm the system"
+      priority: 1
+      enforce: "strict"
+    
+    - name: "transparency"
+      description: "Agent must explain its actions and reasoning"
+      priority: 2
+      enforce: "strict"
+    
+    - name: "user_consent"
+      description: "Agent must ask permission before significant actions"
+      priority: 3
+      enforce: "soft"
+
+  boundaries:
+    workspace:
+      root: "./agent_workspace"
+      allowed_paths:
+        - "./agent_workspace/data"
+        - "./agent_workspace/output"
+        - "./agent_workspace/mini_apps"
+        - "./agent_workspace/temp"
+      forbidden_paths:
+        - ".."
+        - "/etc"
+        - "/var"
+        - "~"
+        - "C:\\Windows"
+        - "C:\\Program Files"
+    
+    resources:
+      max_cpu_percent: 50
+      max_memory_mb: 1024
+      max_disk_mb: 500
+      max_execution_time_seconds: 60
+      max_concurrent_operations: 5
+
+  behaviors:
+    on_error:
+      retry_count: 3
+      backoff_strategy: "exponential"
+      notify_user: true
+    
+    on_capability_denied:
+      explain_reason: true
+      suggest_alternative: true
+    
+    on_long_operation:
+      progress_updates: true
+      update_interval_seconds: 5
+      cancellation_allowed: true
+
+  learning:
+    remember_preferences: true
+    adapt_to_usage: true
+    store_successful_patterns: true
+
+  response:
+    include_confidence: true
+    include_sources: true
+    max_response_length: 4000
+    format_code_blocks: true
+    include_timestamps: true

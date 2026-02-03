@@ -1,0 +1,47 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+
+# VSCode / IDE
+.vscode/
+.idea/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs and reports
+logs/
+*.log
+history/
+
+# Large models and binaries
+models/
+*.dll
+*.exe
+
+# Data artifacts (documents, embeddings, caches)
+data/
+faiss_db/
+cache/
+exports/
+extracted_images/
+static/images/
+agent_workspace/
+app.log
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/.next/
+frontend/dist/
+
+# Misc
+*.db
+*.sqlite3

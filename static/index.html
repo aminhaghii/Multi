@@ -1,0 +1,1019 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agentic Research Assistant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <style>
+        :root {
+            --primary: #1a365d;
+            --secondary: #475569;
+            --accent: #0891b2;
+        }
+        body { font-family: 'Inter', system-ui, sans-serif; }
+        .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+        .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+        .scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .message-enter { animation: slideIn 0.3s ease-out; }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .session-card:hover { background: #f1f5f9; }
+        .session-card.active { background: #e0f2fe; border-left: 3px solid var(--accent); }
+    </style>
+</head>
+<body class="bg-slate-50 h-screen flex flex-col">
+    <!-- Header -->
+    <header class="h-16 bg-white border-b border-slate-200 flex items-center px-4 shrink-0">
+        <div class="flex items-center gap-3">
+            <button id="toggle-sidebar" class="p-2 hover:bg-slate-100 rounded-lg lg:hidden">
+                <i class="fas fa-bars text-slate-600"></i>
+            </button>
+            <div class="flex items-center gap-2">
+                </div>
+                <span class="font-semibold text-slate-800">Research Assistant</span>
+            </div>
+        </div>
+        <div class="flex-1 max-w-xl mx-4">
+            <div class="relative">
+                <input type="text" id="global-search" placeholder="Search conversations..." 
+                       class="w-full px-4 py-2 pl-10 bg-slate-100 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+            </div>
+        </div>
+        <div class="flex items-center gap-2">
+            <span id="llm-status" class="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                <i class="fas fa-circle text-xs mr-1"></i> LLM Online
+            </span>
+        </div>
+    </header>
+
+    <div class="flex-1 flex overflow-hidden">
+        <!-- Left Sidebar - History -->
+        <aside id="sidebar" class="w-72 bg-white border-r border-slate-200 flex flex-col shrink-0 transition-transform lg:translate-x-0 -translate-x-full fixed lg:relative h-[calc(100vh-4rem)] z-20">
+            <!-- New Chat Button -->
+            <div class="p-4 border-b border-slate-200">
+                <button id="new-chat-btn" onclick="createNewSession()" 
+                        class="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-all flex items-center justify-center gap-2">
+                    <i class="fas fa-plus"></i>
+                    New Chat
+                </button>
+            </div>
+
+            <!-- Session List -->
+            <div class="flex-1 overflow-y-auto scrollbar-thin">
+                <div class="p-3">
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Today</h3>
+                    <div id="sessions-today" class="space-y-1"></div>
+                </div>
+                <div class="p-3">
+                    <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Previous</h3>
+                    <div id="sessions-previous" class="space-y-1"></div>
+                </div>
+            </div>
+
+            <!-- Sidebar Footer with RAG Management -->
+            <div class="p-3 border-t border-slate-200 space-y-2">
+                <button onclick="showUploadModal()" class="w-full py-2 px-3 text-left text-sm text-slate-600 hover:bg-slate-100 rounded-lg flex items-center gap-2">
+                    <i class="fas fa-upload text-blue-500"></i>
+                    Upload Documents
+                </button>
+                <button onclick="showDocuments()" class="w-full py-2 px-3 text-left text-sm text-slate-600 hover:bg-slate-100 rounded-lg flex items-center gap-2">
+                    <i class="fas fa-folder text-slate-400"></i>
+                    Manage Documents
+                    <span id="doc-count" class="ml-auto bg-slate-200 px-2 py-0.5 rounded text-xs">0</span>
+                </button>
+                <button onclick="showMindMap()" class="w-full py-2 px-3 text-left text-sm text-slate-600 hover:bg-slate-100 rounded-lg flex items-center gap-2">
+                    <i class="fas fa-project-diagram text-purple-500"></i>
+                    View Mind Map
+                </button>
+                <button onclick="showExportOptions()" class="w-full py-2 px-3 text-left text-sm text-slate-600 hover:bg-slate-100 rounded-lg flex items-center gap-2">
+                    <i class="fas fa-download text-green-500"></i>
+                    Export Chat
+                </button>
+                <button onclick="clearKB()" class="w-full py-2 px-3 text-left text-sm text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2">
+                    <i class="fas fa-trash text-red-500"></i>
+                    Clear All Docs
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="flex-1 flex flex-col min-w-0">
+            <!-- Session Info Bar -->
+            <div id="session-bar" class="h-12 bg-white border-b border-slate-200 flex items-center px-4 shrink-0">
+                <span id="session-title" class="font-medium text-slate-700">New Conversation</span>
+                <span id="session-meta" class="ml-3 text-xs text-slate-400"></span>
+                <div class="ml-auto flex items-center gap-2">
+                    <button onclick="toggleAgentSpace()" class="p-2 hover:bg-slate-100 rounded-lg text-slate-500" title="Agent Space">
+                    </button>
+                </div>
+            </div>
+
+            <!-- Messages -->
+            <div id="messages" class="flex-1 overflow-y-auto p-6 space-y-4 scrollbar-thin">
+                <div id="empty-state" class="flex flex-col items-center justify-center h-full text-slate-400">
+                    <p class="text-lg font-medium">Start a conversation</p>
+                    <p class="text-sm">Upload documents and ask questions about them</p>
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="bg-white border-t border-slate-200 p-4 shrink-0">
+                <div class="max-w-4xl mx-auto">
+                    <div class="flex gap-3">
+                        <div class="flex-1 relative">
+                            <textarea id="message-input" rows="1" placeholder="Ask a question..." 
+                                      class="w-full px-4 py-3 bg-slate-100 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                      onkeydown="handleKeyDown(event)"></textarea>
+                        </div>
+                        <button id="send-btn" onclick="sendMessage()" 
+                                class="p-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-all">
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                    <div class="flex items-center justify-between mt-2 text-xs text-slate-400">
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Canvas/Artifact Panel (Hidden by default, opens as 50% width) -->
+        <aside id="canvas-panel" class="w-1/2 bg-slate-900 border-l border-slate-700 flex-col shrink-0 hidden fixed right-0 top-16 h-[calc(100vh-4rem)] z-30 shadow-2xl">
+            <div class="h-12 bg-slate-800 border-b border-slate-700 flex items-center px-4 justify-between">
+                <div class="flex items-center gap-3">
+                    <i id="canvas-icon" class="fas fa-file-alt text-blue-400"></i>
+                    <span id="canvas-title" class="font-medium text-white text-sm">Artifact</span>
+                    <span id="canvas-type" class="px-2 py-0.5 bg-slate-700 text-slate-300 rounded text-xs">document</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="downloadArtifact()" class="p-2 hover:bg-slate-700 rounded text-slate-400 hover:text-white" title="Download">
+                        <i class="fas fa-download"></i>
+                    </button>
+                    <button onclick="copyArtifact()" class="p-2 hover:bg-slate-700 rounded text-slate-400 hover:text-white" title="Copy">
+                        <i class="fas fa-copy"></i>
+                    </button>
+                    <button onclick="closeCanvas()" class="p-2 hover:bg-slate-700 rounded text-slate-400 hover:text-white" title="Close">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+            <div id="canvas-content" class="flex-1 overflow-auto bg-white">
+                <!-- Artifact content renders here -->
+            </div>
+        </aside>
+    </div>
+
+    <!-- Upload Modal -->
+    <div id="upload-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-2xl w-full max-w-md p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold text-slate-800">Upload Documents</h2>
+                <button onclick="closeUploadModal()" class="text-slate-400 hover:text-slate-600">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            
+            <div class="space-y-4">
+                <div class="flex gap-2">
+                    <button onclick="setUploadType('pdf')" id="btn-pdf" class="flex-1 py-3 rounded-lg font-medium transition-all bg-blue-600 text-white">
+                        <i class="fas fa-file-pdf mr-2"></i>PDF
+                    </button>
+                    <button onclick="setUploadType('image')" id="btn-image" class="flex-1 py-3 rounded-lg font-medium transition-all bg-slate-200 text-slate-600 hover:bg-slate-300">
+                        <i class="fas fa-image mr-2"></i>Image
+                    </button>
+                    <button onclick="setUploadType('audio')" id="btn-audio" class="flex-1 py-3 rounded-lg font-medium transition-all bg-slate-200 text-slate-600 hover:bg-slate-300">
+                        <i class="fas fa-microphone mr-2"></i>Voice
+                    </button>
+                </div>
+                
+                <input type="file" id="file-input" class="hidden" onchange="handleFileUpload(event)">
+                <button onclick="document.getElementById('file-input').click()" id="upload-btn" 
+                        class="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-all">
+                    <i class="fas fa-upload mr-2"></i>
+                    <span id="upload-btn-text">Choose File</span>
+                </button>
+                
+                <div id="upload-progress" class="hidden">
+                    <div class="w-full bg-slate-200 rounded-full h-2">
+                        <div id="upload-bar" class="bg-blue-600 h-2 rounded-full transition-all" style="width: 0%"></div>
+                    </div>
+                    <p id="upload-status" class="text-sm text-slate-600 mt-2 text-center">Uploading...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mind Map Modal -->
+    <div id="mindmap-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+        <div class="bg-white rounded-2xl w-11/12 h-5/6 max-w-6xl flex flex-col">
+            <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+                <h2 class="text-xl font-bold text-slate-800">Knowledge Base Mind Map</h2>
+                <button onclick="closeMindMap()" class="text-slate-400 hover:text-slate-600">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            <div id="mindmap-container" class="flex-1 overflow-hidden bg-slate-50"></div>
+        </div>
+    </div>
+
+    <!-- KB Manager Modal -->
+    <div id="kb-manager-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+        <div class="bg-white rounded-2xl w-11/12 h-5/6 max-w-5xl flex flex-col">
+            <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+                <h2 class="text-xl font-bold text-slate-800">Document Management</h2>
+                <button onclick="closeKBManager()" class="text-slate-400 hover:text-slate-600">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-6">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    <div class="bg-slate-50 rounded-lg p-4">
+                        <div class="text-slate-500 text-sm">Total Documents</div>
+                        <div class="text-2xl font-bold text-slate-800" id="kb-total-docs">0</div>
+                    </div>
+                    <div class="bg-slate-50 rounded-lg p-4">
+                        <div class="text-slate-500 text-sm">Total Chunks</div>
+                        <div class="text-2xl font-bold text-slate-800" id="kb-total-chunks">0</div>
+                    </div>
+                    <div class="bg-slate-50 rounded-lg p-4">
+                        <div class="text-slate-500 text-sm">Embedding Model</div>
+                        <div class="text-sm font-medium text-slate-800" id="kb-model">MiniLM-L6</div>
+                    </div>
+                </div>
+                <div class="bg-slate-50 rounded-lg">
+                    <div class="p-4 border-b border-slate-200">
+                        <h3 class="font-semibold text-slate-800">Documents List</h3>
+                    </div>
+                    <div id="kb-docs-list" class="divide-y divide-slate-200">
+                        <!-- Documents will be loaded here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentSessionId = null;
+        let chatHistory = [];
+        let sessions = [];
+        let uploadType = 'pdf';
+
+        async function init() {
+            await loadSessions();
+            await checkLLMStatus();
+            await fetchStats();
+        }
+
+        async function checkLLMStatus() {
+            try {
+                const res = await fetch('/api/health');
+                const data = await res.json();
+                const status = document.getElementById('llm-status');
+                if (data.llm_available) {
+                    status.innerHTML = '<i class="fas fa-circle text-xs mr-1"></i> LLM Online';
+                    status.className = 'px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700';
+                } else {
+                    status.innerHTML = '<i class="fas fa-circle text-xs mr-1"></i> LLM Offline';
+                    status.className = 'px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700';
+                }
+            } catch (e) {
+                console.error('Health check failed:', e);
+            }
+        }
+
+        async function fetchStats() {
+            try {
+                const res = await fetch('/api/stats');
+                const data = await res.json();
+                document.getElementById('doc-count').textContent = data.total_documents || 0;
+            } catch (e) {}
+        }
+
+        async function loadSessions() {
+            try {
+                const res = await fetch('/api/sessions/recent?limit=20');
+                sessions = await res.json();
+                renderSessions();
+            } catch (e) {
+                console.error('Failed to load sessions:', e);
+                sessions = [];
+                renderSessions();
+            }
+        }
+
+        function renderSessions() {
+            const today = new Date().toDateString();
+            const todayContainer = document.getElementById('sessions-today');
+            const prevContainer = document.getElementById('sessions-previous');
+            
+            todayContainer.innerHTML = '';
+            prevContainer.innerHTML = '';
+
+            if (!sessions.length) {
+                todayContainer.innerHTML = '<p class="text-sm text-slate-400 py-2">No conversations yet</p>';
+                return;
+            }
+
+            sessions.forEach(session => {
+                const sessionDate = new Date(session.created_at).toDateString();
+                const isToday = sessionDate === today;
+                const container = isToday ? todayContainer : prevContainer;
+                
+                const card = document.createElement('div');
+                card.className = `session-card p-3 rounded-lg cursor-pointer ${session.id === currentSessionId ? 'active' : ''}`;
+                card.onclick = () => loadSession(session.id);
+                
+                card.innerHTML = `
+                    <div class="font-medium text-sm text-slate-700 truncate">${session.title || 'Untitled'}</div>
+                    <div class="text-xs text-slate-400 mt-1 truncate">${session.last_message_preview || 'No messages'}</div>
+                    <div class="text-xs text-slate-400 mt-1">${formatTime(session.updated_at)}</div>
+                `;
+                
+                container.appendChild(card);
+            });
+        }
+
+        function formatTime(timestamp) {
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diff = now - date;
+            
+            if (diff < 60000) return 'Just now';
+            if (diff < 3600000) return `${Math.floor(diff/60000)}m ago`;
+            if (diff < 86400000) return `${Math.floor(diff/3600000)}h ago`;
+            return date.toLocaleDateString();
+        }
+
+        async function createNewSession() {
+            try {
+                const res = await fetch('/api/sessions', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({title: 'New Chat'})
+                });
+                const session = await res.json();
+                currentSessionId = session.id;
+                chatHistory = [];
+                
+                document.getElementById('messages').innerHTML = `
+                    <div id="empty-state" class="flex flex-col items-center justify-center h-full text-slate-400">
+                        <i class="fas fa-comments text-6xl mb-4 text-slate-300"></i>
+                        <p class="text-lg font-medium">Start a conversation</p>
+                        <p class="text-sm">Upload documents and ask questions about them</p>
+                    </div>
+                `;
+                document.getElementById('session-title').textContent = 'New Conversation';
+                document.getElementById('session-meta').textContent = '';
+                
+                await loadSessions();
+            } catch (e) {
+                console.error('Failed to create session:', e);
+                currentSessionId = 'temp_' + Date.now();
+            }
+        }
+
+        async function loadSession(sessionId) {
+            try {
+                const res = await fetch(`/api/sessions/${sessionId}?include_messages=true`);
+                const session = await res.json();
+                
+                currentSessionId = sessionId;
+                document.getElementById('session-title').textContent = session.title || 'Conversation';
+                document.getElementById('session-meta').textContent = `${session.message_count || 0} messages`;
+                
+                const container = document.getElementById('messages');
+                container.innerHTML = '';
+                
+                if (session.messages && session.messages.length > 0) {
+                    chatHistory = session.messages.map(m => ({
+                        role: m.role,
+                        content: m.content,
+                        metadata: m.metadata
+                    }));
+                    
+                    session.messages.forEach(m => {
+                        addMessage(m.role, m.content, m.metadata);
+                    });
+                } else {
+                    container.innerHTML = `
+                        <div id="empty-state" class="flex flex-col items-center justify-center h-full text-slate-400">
+                            <i class="fas fa-comments text-6xl mb-4 text-slate-300"></i>
+                            <p class="text-lg font-medium">Continue this conversation</p>
+                        </div>
+                    `;
+                    chatHistory = [];
+                }
+                
+                renderSessions();
+            } catch (e) {
+                console.error('Failed to load session:', e);
+            }
+        }
+
+        function handleKeyDown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('message-input');
+            const message = input.value.trim();
+            if (!message) return;
+
+            input.value = '';
+            
+            const emptyState = document.getElementById('empty-state');
+            if (emptyState) emptyState.remove();
+
+            addMessage('user', message);
+            chatHistory.push({role: 'user', content: message});
+
+            showTypingIndicator();
+
+            try {
+                const res = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        message: message,
+                        session_id: currentSessionId
+                    })
+                });
+                
+                const data = await res.json();
+                hideTypingIndicator();
+
+                if (data.success) {
+                    const metadata = {
+                        confidence: data.confidence,
+                        verified: data.verified,
+                        sources: data.sources,
+                        image_paths: data.image_paths,
+                        artifact: data.artifact
+                    };
+                    
+                    addMessage('assistant', data.answer, metadata);
+                    chatHistory.push({
+                        role: 'assistant',
+                        content: data.answer,
+                        metadata: metadata
+                    });
+                    
+                    // Check if response contains artifact to display in canvas
+                    detectAndOpenCanvas(data.answer, metadata);
+                } else {
+                    addMessage('assistant', data.error || 'An error occurred', {error: true});
+                }
+            } catch (e) {
+                hideTypingIndicator();
+                addMessage('assistant', 'Failed to get response: ' + e.message, {error: true});
+            }
+        }
+
+        function addMessage(role, content, metadata = null) {
+            const container = document.getElementById('messages');
+            const wrapper = document.createElement('div');
+            wrapper.className = `message-enter flex ${role === 'user' ? 'justify-end' : 'justify-start'}`;
+            
+            const bubble = document.createElement('div');
+            bubble.className = `max-w-2xl rounded-2xl px-4 py-3 ${
+                role === 'user' 
+                    ? 'bg-blue-600 text-white' 
+                    : metadata?.error 
+                        ? 'bg-red-50 text-red-700 border border-red-200' 
+                        : 'bg-white border border-slate-200 text-slate-700'
+            }`;
+            
+            let html = `<p class="whitespace-pre-wrap text-sm">${escapeHtml(content)}</p>`;
+            
+            if (metadata && role === 'assistant' && !metadata.error) {
+                html += `
+                    <div class="mt-3 pt-3 border-t ${role === 'user' ? 'border-blue-500' : 'border-slate-200'} flex gap-4 text-xs">
+                        <span class="${metadata.confidence >= 0.7 ? 'text-green-600' : 'text-yellow-600'}">
+                            Confidence: ${(metadata.confidence * 100).toFixed(0)}%
+                        </span>
+                        <span class="${metadata.verified ? 'text-green-600' : 'text-slate-400'}">
+                            ${metadata.verified ? 'Verified' : 'Unverified'}
+                        </span>
+                    </div>
+                `;
+                
+                if (metadata.image_paths && metadata.image_paths.length > 0) {
+                    html += `<div class="mt-3 space-y-2">`;
+                    metadata.image_paths.forEach(img => {
+                        html += `
+                            <div class="bg-slate-50 rounded-lg p-2">
+                                <img src="${img.path}" alt="Figure" class="max-w-full rounded" onerror="this.style.display='none'">
+                                <div class="text-xs text-slate-500 mt-1">Source: ${img.source} (Page ${img.page})</div>
+                            </div>
+                        `;
+                    });
+                    html += `</div>`;
+                }
+            }
+            
+            bubble.innerHTML = html;
+            wrapper.appendChild(bubble);
+            container.appendChild(wrapper);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function showTypingIndicator() {
+            const container = document.getElementById('messages');
+            const indicator = document.createElement('div');
+            indicator.id = 'typing-indicator';
+            indicator.className = 'flex justify-start message-enter';
+            indicator.innerHTML = `
+                <div class="bg-white border border-slate-200 rounded-2xl px-4 py-3">
+                    <div class="flex gap-1">
+                        <span class="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></span>
+                        <span class="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style="animation-delay: 0.1s"></span>
+                        <span class="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></span>
+                    </div>
+                </div>
+            `;
+            container.appendChild(indicator);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function hideTypingIndicator() {
+            const indicator = document.getElementById('typing-indicator');
+            if (indicator) indicator.remove();
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Upload Modal Functions
+        function showUploadModal() {
+            document.getElementById('upload-modal').classList.remove('hidden');
+        }
+
+        function closeUploadModal() {
+            document.getElementById('upload-modal').classList.add('hidden');
+        }
+
+        function setUploadType(type) {
+            uploadType = type;
+            const fileInput = document.getElementById('file-input');
+            const btnText = document.getElementById('upload-btn-text');
+            
+            document.getElementById('btn-pdf').className = type === 'pdf' 
+                ? 'flex-1 py-3 rounded-lg font-medium transition-all bg-blue-600 text-white'
+                : 'flex-1 py-3 rounded-lg font-medium transition-all bg-slate-200 text-slate-600 hover:bg-slate-300';
+            document.getElementById('btn-image').className = type === 'image'
+                ? 'flex-1 py-3 rounded-lg font-medium transition-all bg-blue-600 text-white'
+                : 'flex-1 py-3 rounded-lg font-medium transition-all bg-slate-200 text-slate-600 hover:bg-slate-300';
+            document.getElementById('btn-audio').className = type === 'audio'
+                ? 'flex-1 py-3 rounded-lg font-medium transition-all bg-blue-600 text-white'
+                : 'flex-1 py-3 rounded-lg font-medium transition-all bg-slate-200 text-slate-600 hover:bg-slate-300';
+            
+            if (type === 'pdf') { fileInput.accept = '.pdf'; btnText.textContent = 'Choose PDF'; }
+            else if (type === 'image') { fileInput.accept = '.png,.jpg,.jpeg'; btnText.textContent = 'Choose Image'; }
+            else { fileInput.accept = '.wav,.mp3,.m4a,.ogg'; btnText.textContent = 'Choose Audio'; }
+        }
+
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const progress = document.getElementById('upload-progress');
+            const status = document.getElementById('upload-status');
+            progress.classList.remove('hidden');
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                let endpoint = uploadType === 'pdf' ? '/api/upload/pdf' 
+                    : uploadType === 'image' ? '/api/upload/image' : '/api/upload/audio';
+                const res = await fetch(endpoint, {method: 'POST', body: formData});
+                const data = await res.json();
+                
+                if (res.ok) {
+                    status.textContent = 'Upload successful!';
+                    await fetchStats();
+                    setTimeout(() => {
+                        closeUploadModal();
+                        progress.classList.add('hidden');
+                    }, 1500);
+                } else {
+                    status.textContent = 'Upload failed: ' + (data.detail || 'Unknown error');
+                }
+            } catch (err) {
+                status.textContent = 'Upload failed: ' + err.message;
+            } finally {
+                event.target.value = '';
+            }
+        }
+
+        // Mind Map Functions
+        async function showMindMap() {
+            try {
+                const res = await fetch('/api/documents/graph');
+                const data = await res.json();
+                
+                if (!data.tree || !data.tree.children || data.tree.children.length === 0) {
+                    alert('No documents in knowledge base yet. Upload some documents first!');
+                    return;
+                }
+                
+                document.getElementById('mindmap-modal').classList.remove('hidden');
+                renderMindMap(data.tree);
+            } catch (err) {
+                alert('Failed to load mind map: ' + err.message);
+            }
+        }
+
+        function closeMindMap() {
+            document.getElementById('mindmap-modal').classList.add('hidden');
+            document.getElementById('mindmap-container').innerHTML = '';
+        }
+
+        function renderMindMap(tree) {
+            const container = document.getElementById('mindmap-container');
+            container.innerHTML = '';
+            
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+            const margin = {top: 20, right: 120, bottom: 20, left: 120};
+            
+            const svg = d3.select('#mindmap-container')
+                .append('svg')
+                .attr('width', width)
+                .attr('height', height);
+            
+            const g = svg.append('g')
+                .attr('transform', `translate(${margin.left},${margin.top})`);
+            
+            svg.call(d3.zoom()
+                .scaleExtent([0.3, 2])
+                .on('zoom', (event) => {
+                    g.attr('transform', event.transform);
+                }));
+            
+            const treeLayout = d3.tree()
+                .size([height - margin.top - margin.bottom, width - margin.left - margin.right]);
+            
+            const root = d3.hierarchy(tree);
+            const treeData = treeLayout(root);
+            const nodes = treeData.descendants();
+            const links = treeData.links();
+            
+            nodes.forEach(d => d.y = d.depth * 200);
+            
+            const link = g.selectAll('.link')
+                .data(links)
+                .enter().append('path')
+                .attr('class', 'link')
+                .attr('d', d => {
+                    return `M ${d.source.y} ${d.source.x}
+                            C ${(d.source.y + d.target.y) / 2} ${d.source.x},
+                              ${(d.source.y + d.target.y) / 2} ${d.target.x},
+                              ${d.target.y} ${d.target.x}`;
+                })
+                .style('fill', 'none')
+                .style('stroke', '#cbd5e1')
+                .style('stroke-width', '2px');
+            
+            const node = g.selectAll('.node')
+                .data(nodes)
+                .enter().append('g')
+                .attr('class', 'node')
+                .attr('transform', d => `translate(${d.y},${d.x})`);
+            
+            node.append('circle')
+                .attr('r', 8)
+                .style('fill', d => {
+                    if (d.data.type === 'root') return '#3b82f6';
+                    if (d.data.type === 'pdf') return '#ef4444';
+                    if (d.data.type === 'image') return '#10b981';
+                    if (d.data.type === 'audio') return '#f59e0b';
+                    return '#8b5cf6';
+                })
+                .style('stroke', '#fff')
+                .style('stroke-width', '2px');
+            
+            node.append('text')
+                .attr('dy', '.35em')
+                .attr('x', d => d.children ? -13 : 13)
+                .attr('text-anchor', d => d.children ? 'end' : 'start')
+                .text(d => d.data.name)
+                .style('fill', '#1e293b')
+                .style('font-size', '11px');
+        }
+
+        // Document Management Functions
+        async function showDocuments() {
+            try {
+                const res = await fetch('/api/documents/list');
+                const data = await res.json();
+                
+                document.getElementById('kb-manager-modal').classList.remove('hidden');
+                
+                const docs = data.documents || [];
+                const totalChunks = docs.reduce((sum, doc) => sum + (doc.chunks || 0), 0);
+                
+                document.getElementById('kb-total-docs').textContent = docs.length;
+                document.getElementById('kb-total-chunks').textContent = totalChunks;
+                
+                const listContainer = document.getElementById('kb-docs-list');
+                listContainer.innerHTML = '';
+                
+                if (docs.length === 0) {
+                    listContainer.innerHTML = '<p class="p-4 text-center text-slate-500">No documents uploaded yet</p>';
+                    return;
+                }
+                
+                docs.forEach(doc => {
+                    const item = document.createElement('div');
+                    item.className = 'p-4 hover:bg-slate-100 transition-colors';
+                    item.innerHTML = `
+                        <div class="flex items-center justify-between">
+                            <div class="flex-1">
+                                <div class="font-medium text-slate-800">${doc.name || doc.filename || 'Unknown'}</div>
+                                <div class="text-sm text-slate-500 mt-1">
+                                    ${doc.chunks} chunks • ${((doc.size || 0) / 1024).toFixed(1)} KB
+                                </div>
+                            </div>
+                            <button onclick="deleteDocument('${doc.id || doc.file_hash}')" 
+                                    class="ml-4 px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded">
+                                Delete
+                            </button>
+                        </div>
+                    `;
+                    listContainer.appendChild(item);
+                });
+            } catch (err) {
+                alert('Failed to load documents: ' + err.message);
+            }
+        }
+
+        function closeKBManager() {
+            document.getElementById('kb-manager-modal').classList.add('hidden');
+        }
+
+        async function deleteDocument(fileHash) {
+            if (!confirm('Are you sure you want to delete this document?')) return;
+            try {
+                const res = await fetch(`/api/documents/${fileHash}`, {method: 'DELETE'});
+                if (res.ok) {
+                    await showDocuments();
+                    await fetchStats();
+                } else {
+                    alert('Failed to delete document');
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        async function clearKB() {
+            if (!confirm('Are you sure you want to clear all documents? This cannot be undone.')) return;
+            try {
+                const res = await fetch('/api/kb/clear', {method: 'DELETE'});
+                if (res.ok) {
+                    alert('Knowledge base cleared successfully');
+                    await fetchStats();
+                } else {
+                    alert('Failed to clear knowledge base');
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        function showExportOptions() {
+            if (chatHistory.length === 0) {
+                alert('No conversation to export.');
+                return;
+            }
+            
+            const format = prompt('Export format: markdown, html, or pdf', 'markdown');
+            if (!format) return;
+            
+            fetch('/api/export', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({chat_history: chatHistory, format: format})
+            })
+            .then(res => res.blob())
+            .then(blob => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `chat_export.${format === 'html' ? 'html' : 'md'}`;
+                a.click();
+            })
+            .catch(e => alert('Export failed: ' + e.message));
+        }
+
+        function toggleAgentSpace() {
+            const panel = document.getElementById('agent-space');
+            panel.classList.toggle('hidden');
+            panel.classList.toggle('flex');
+        }
+
+        function quickAction(action) {
+            const input = document.getElementById('message-input');
+            const prompts = {
+                'analyze': 'Analyze the data in the uploaded document and provide key statistics.',
+                'visualize': 'Create a chart showing the main findings from the document.',
+                'code': 'Write Python code to process and analyze the document data.',
+                'export': 'Export the current conversation as a report.'
+            };
+            input.value = prompts[action] || '';
+            input.focus();
+        }
+
+        // Canvas/Artifact Functions
+        let currentArtifact = null;
+
+        function openCanvas(title, type, content) {
+            currentArtifact = { title, type, content };
+            const panel = document.getElementById('canvas-panel');
+            const titleEl = document.getElementById('canvas-title');
+            const typeEl = document.getElementById('canvas-type');
+            const iconEl = document.getElementById('canvas-icon');
+            const contentEl = document.getElementById('canvas-content');
+            
+            titleEl.textContent = title || 'Artifact';
+            typeEl.textContent = type || 'document';
+            
+            // Set icon based on type
+            const icons = {
+                'html': 'fa-code',
+                'markdown': 'fa-file-alt',
+                'pdf': 'fa-file-pdf',
+                'code': 'fa-terminal',
+                'report': 'fa-chart-bar',
+                'table': 'fa-table'
+            };
+            iconEl.className = `fas ${icons[type] || 'fa-file-alt'} text-blue-400`;
+            
+            // Render content based on type
+            renderArtifact(type, content, contentEl);
+            
+            panel.classList.remove('hidden');
+            panel.classList.add('flex');
+        }
+
+        function closeCanvas() {
+            const panel = document.getElementById('canvas-panel');
+            panel.classList.add('hidden');
+            panel.classList.remove('flex');
+        }
+
+        function renderArtifact(type, content, container) {
+            container.innerHTML = '';
+            
+            if (type === 'html' || type === 'report') {
+                const iframe = document.createElement('iframe');
+                iframe.className = 'w-full h-full border-0';
+                iframe.srcdoc = content;
+                container.appendChild(iframe);
+            } else if (type === 'markdown') {
+                const div = document.createElement('div');
+                div.className = 'p-6 prose prose-slate max-w-none';
+                div.innerHTML = renderMarkdown(content);
+                container.appendChild(div);
+            } else if (type === 'code') {
+                const pre = document.createElement('pre');
+                pre.className = 'p-4 bg-slate-900 text-green-400 font-mono text-sm overflow-auto h-full';
+                pre.textContent = content;
+                container.appendChild(pre);
+            } else if (type === 'table') {
+                const div = document.createElement('div');
+                div.className = 'p-4 overflow-auto';
+                div.innerHTML = content;
+                container.appendChild(div);
+            } else {
+                const div = document.createElement('div');
+                div.className = 'p-6 whitespace-pre-wrap';
+                div.textContent = content;
+                container.appendChild(div);
+            }
+        }
+
+        function renderMarkdown(md) {
+            return md
+                .replace(/^### (.*$)/gm, '<h3 class="text-lg font-bold mt-4 mb-2">$1</h3>')
+                .replace(/^## (.*$)/gm, '<h2 class="text-xl font-bold mt-6 mb-3">$1</h2>')
+                .replace(/^# (.*$)/gm, '<h1 class="text-2xl font-bold mt-8 mb-4">$1</h1>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/`(.*?)`/g, '<code class="bg-slate-100 px-1 rounded">$1</code>')
+                .replace(/\n/g, '<br>');
+        }
+
+        function downloadArtifact() {
+            if (!currentArtifact) return;
+            const { title, type, content } = currentArtifact;
+            const ext = type === 'html' ? 'html' : type === 'markdown' ? 'md' : type === 'code' ? 'py' : 'txt';
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${title.replace(/\s+/g, '_')}.${ext}`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function copyArtifact() {
+            if (!currentArtifact) return;
+            navigator.clipboard.writeText(currentArtifact.content)
+                .then(() => alert('Copied to clipboard!'))
+                .catch(e => alert('Failed to copy: ' + e.message));
+        }
+
+        // Detect if response should open canvas
+        function detectAndOpenCanvas(response, metadata) {
+            console.log('[Canvas] detectAndOpenCanvas called', {
+                responseLength: response?.length,
+                hasMetadata: !!metadata,
+                hasArtifact: !!metadata?.artifact
+            });
+            
+            // PRIORITY 1: Check metadata.artifact from backend (most reliable)
+            if (metadata && metadata.artifact && metadata.artifact.content) {
+                console.log('[Canvas] Opening from metadata.artifact');
+                openCanvas(
+                    metadata.artifact.title || 'Generated Report',
+                    metadata.artifact.type || 'report',
+                    metadata.artifact.content
+                );
+                return true;
+            }
+            
+            // PRIORITY 2: Check for code blocks with specific types
+            const codeBlockPattern = /```(html|markdown|report|code|table|json|csv)\n([\s\S]*?)```/g;
+            const matches = [...response.matchAll(codeBlockPattern)];
+            
+            if (matches.length > 0) {
+                // Take the largest code block (likely the main content)
+                let largestMatch = matches[0];
+                for (const match of matches) {
+                    if (match[2].length > largestMatch[2].length) {
+                        largestMatch = match;
+                    }
+                }
+                
+                const type = largestMatch[1];
+                const content = largestMatch[2];
+                
+                console.log('[Canvas] Opening from code block:', type);
+                openCanvas('Generated ' + type.charAt(0).toUpperCase() + type.slice(1), type, content);
+                return true;
+            }
+            
+            // PRIORITY 3: Check for very long responses (auto-report)
+            if (response && response.length > 2000) {
+                console.log('[Canvas] Opening for long response:', response.length, 'chars');
+                const htmlContent = formatLongResponseAsHTML(response);
+                openCanvas('Detailed Response', 'report', htmlContent);
+                return true;
+            }
+            
+            return false;
+        }
+        
+        // Helper function to format long response as HTML
+        function formatLongResponseAsHTML(response) {
+            let html = response
+                // Headers
+                .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+                .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+                .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+                // Bold
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                // Italic
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                // Lists
+                .replace(/^\- (.*$)/gim, '<li>$1</li>')
+                .replace(/^\* (.*$)/gim, '<li>$1</li>')
+                .replace(/^(\d+)\. (.*$)/gim, '<li>$2</li>')
+                // Paragraphs
+                .replace(/\n\n/g, '</p><p>')
+                // Line breaks
+                .replace(/\n/g, '<br>');
+            
+            // Wrap in container with styling
+            return `
+                <div style="font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; padding: 24px; color: #1e293b;">
+                    <p>${html}</p>
+                </div>
+            `;
+        }
+
+        init();
+        setInterval(checkLLMStatus, 30000);
+    </script>
+</body>
+</html>

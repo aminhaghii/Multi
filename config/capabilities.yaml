@@ -1,0 +1,142 @@
+# Agent Capabilities Configuration
+# Defines what the agent CAN and CANNOT do
+
+capabilities:
+  file_operations:
+    read_files:
+      enabled: true
+      allowed_extensions: [".txt", ".md", ".json", ".csv", ".pdf"]
+      max_file_size: "10MB"
+      scope: "workspace_only"
+    
+    write_files:
+      enabled: true
+      allowed_extensions: [".txt", ".md", ".json", ".csv", ".html"]
+      max_file_size: "5MB"
+      scope: "output_directory_only"
+    
+    create_directories:
+      enabled: true
+      max_depth: 3
+      scope: "workspace_only"
+    
+    delete_files:
+      enabled: false
+      reason: "Safety restriction"
+
+  code_execution:
+    python:
+      enabled: true
+      timeout_seconds: 30
+      max_memory_mb: 512
+      allowed_imports:
+        - "numpy"
+        - "pandas"
+        - "matplotlib"
+        - "seaborn"
+        - "json"
+        - "csv"
+        - "datetime"
+        - "math"
+        - "random"
+        - "collections"
+        - "itertools"
+        - "functools"
+        - "re"
+        - "statistics"
+      blocked_imports:
+        - "os"
+        - "sys"
+        - "subprocess"
+        - "shutil"
+        - "socket"
+        - "requests"
+        - "urllib"
+        - "ftplib"
+        - "smtplib"
+    
+    javascript:
+      enabled: true
+      timeout_seconds: 10
+      sandbox: true
+      dom_access: false
+
+  web_operations:
+    fetch_url:
+      enabled: true
+      allowed_domains: ["*"]
+      timeout_seconds: 15
+      max_response_size: "5MB"
+    
+    api_calls:
+      enabled: true
+      rate_limit: "10/minute"
+      allowed_methods: ["GET", "POST"]
+
+  data_processing:
+    analyze_data:
+      enabled: true
+      max_rows: 100000
+      allowed_operations:
+        - "statistics"
+        - "aggregation"
+        - "filtering"
+        - "transformation"
+        - "correlation"
+    
+    visualize_data:
+      enabled: true
+      output_formats: ["png", "svg", "html"]
+      max_data_points: 10000
+      chart_types:
+        - "line"
+        - "bar"
+        - "scatter"
+        - "pie"
+        - "heatmap"
+        - "box"
+        - "histogram"
+        - "area"
+
+  mini_app_creation:
+    enabled: true
+    max_apps_per_session: 10
+    allowed_frameworks:
+      - "vanilla_js"
+      - "react_simple"
+    max_code_size: "50KB"
+    auto_deploy: true
+    templates:
+      - "data_viewer"
+      - "chart_dashboard"
+      - "form_builder"
+      - "document_viewer"
+      - "comparison_tool"
+      - "timeline_viewer"
+      - "kanban_board"
+      - "code_playground"
+      - "quiz_app"
+      - "report_generator"
+
+  communication:
+    send_notifications:
+      enabled: false
+    
+    export_data:
+      enabled: true
+      formats:
+        - "json"
+        - "csv"
+        - "markdown"
+        - "html"
+        - "pdf"
+
+  system_operations:
+    access_environment:
+      enabled: false
+    
+    modify_system:
+      enabled: false
+    
+    network_operations:
+      enabled: false
