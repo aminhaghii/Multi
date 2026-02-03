@@ -16,7 +16,7 @@ class DocumentProcessor:
     - Provides proper metadata for source attribution
     """
     
-    def __init__(self, vector_store: VectorStore, chunk_size: int = 400, chunk_overlap: int = 100):
+    def __init__(self, vector_store: VectorStore, chunk_size: int = 800, chunk_overlap: int = 160):
         self.vector_store = vector_store
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap

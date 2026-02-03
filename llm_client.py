@@ -62,8 +62,8 @@ class LLMClient:
         except:
             return False
     
-    def generate(self, prompt: str, max_tokens: int = 400, temperature: float = 0.6, top_p: float = 0.9, stop: list = None):
-        """Generate response from LLM"""
+    def generate(self, prompt: str, max_tokens: int = 400, temperature: float = 0.6, top_p: float = 0.9, stop: list = None, max_retries: int = 3):
+        """Generate response from LLM with retry logic and validation"""
         
         # Use direct model if available
         if self.model:
@@ -77,6 +77,10 @@ class LLMClient:
                 
                 answer = response['choices'][0]['text'].strip()
                 
+                # Validate response
+                if not answer or len(answer) < 20:
+                    raise ValueError("Empty or too short response from direct model")
+                
                 return {
                     "success": True,
                     "text": answer,
@@ -86,42 +90,70 @@ class LLMClient:
             except Exception as e:
                 print(f"Direct generation failed: {e}")
         
-        # Fallback to HTTP
-        try:
-            payload = {
-                "prompt": prompt,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "top_p": top_p
-            }
-            
-            if stop:
-                payload["stop"] = stop
-            
-            response = requests.post(
-                f"{self.base_url}/completion",
-                json=payload,
-                timeout=60
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                return {
-                    "success": True,
-                    "text": result.get("content", ""),
-                    "model": result.get("model", "unknown")
-                }
-            else:
-                return {
-                    "success": False,
-                    "error": f"HTTP {response.status_code}: {response.text}"
+        # Fallback to HTTP with retry logic
+        import time
+        
+        for attempt in range(max_retries):
+            try:
+                payload = {
+                    "prompt": prompt,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                    "top_p": top_p
                 }
                 
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }
+                if stop:
+                    payload["stop"] = stop
+                
+                response = requests.post(
+                    f"{self.base_url}/completion",
+                    json=payload,
+                    timeout=30  # Reduced from 60 to 30
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    text = result.get("content", "").strip()
+                    
+                    # Validate response
+                    if not text or len(text) < 20:
+                        raise ValueError("Empty or too short response")
+                    
+                    return {
+                        "success": True,
+                        "text": text,
+                        "model": result.get("model", "unknown")
+                    }
+                else:
+                    if attempt < max_retries - 1:
+                        print(f"HTTP {response.status_code} on attempt {attempt + 1}, retrying...")
+                        time.sleep(2 ** attempt)
+                        continue
+                    return {
+                        "success": False,
+                        "error": f"HTTP {response.status_code}: {response.text}"
+                    }
+                    
+            except (requests.Timeout, requests.ConnectionError) as e:
+                if attempt < max_retries - 1:
+                    print(f"Connection error on attempt {attempt + 1}, retrying...")
+                    time.sleep(2 ** attempt)
+                    continue
+                return {
+                    "success": False,
+                    "error": f"Max retries exceeded: {str(e)}"
+                }
+                
+            except Exception as e:
+                return {
+                    "success": False,
+                    "error": str(e)
+                }
+        
+        return {
+            "success": False,
+            "error": "All retry attempts failed"
+        }
     
     def generate_with_images(self, prompt: str, image_paths: list, max_tokens: int = 400, temperature: float = 0.6):
         """Generate response with images (multimodal)"""

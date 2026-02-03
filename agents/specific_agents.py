@@ -30,17 +30,19 @@ class QueryUnderstandingAgent(BaseAgent):
 1. Intent (research/analytical/descriptive/comparison)
 2. Key concepts (list main topics)
 3. Expected answer type (factual/explanatory/listing)
+4. Expanded query terms (synonyms, related concepts)
 
 Query: {user_query}
 
 Respond in this exact format:
 Intent: [intent]
 Keywords: [keyword1, keyword2, keyword3]
-Answer Type: [type]"""
+Answer Type: [type]
+Expanded Terms: [term1, term2, term3]"""
 
         result = self.llm_client.generate(
             prompt=prompt,
-            max_tokens=150,
+            max_tokens=200,
             temperature=0.3
         )
         
@@ -55,6 +57,7 @@ Answer Type: [type]"""
         intent = "research"
         keywords = []
         answer_type = "explanatory"
+        expanded_terms = []
         
         for line in response_text.split('\n'):
             line = line.strip()
@@ -65,16 +68,24 @@ Answer Type: [type]"""
                 keywords = [k.strip() for k in kw_text.split(',')]
             elif line.startswith('Answer Type:'):
                 answer_type = line.split(':', 1)[1].strip().lower()
+            elif line.startswith('Expanded Terms:'):
+                exp_text = line.split(':', 1)[1].strip()
+                expanded_terms = [t.strip() for t in exp_text.split(',')]
         
         if not keywords:
             keywords = user_query.split()[:5]
         
-        self.log(f"Extracted - Intent: {intent}, Keywords: {keywords[:3]}")
+        # Combine original keywords with expanded terms for better retrieval
+        all_search_terms = keywords + expanded_terms
+        
+        self.log(f"Extracted - Intent: {intent}, Keywords: {keywords[:3]}, Expanded: {len(expanded_terms)}")
         
         return {
             "success": True,
             "intent": intent,
             "keywords": keywords,
+            "expanded_terms": expanded_terms,
+            "all_search_terms": all_search_terms,
             "answer_type": answer_type,
             "original_query": user_query
         }
@@ -172,17 +183,21 @@ class ReasoningAgent(BaseAgent):
         """Fallback: Use simplified prompt for reasoning."""
         self.log("Attempting simplified reasoning (Fallback Level 1)...")
         
-        simple_prompt = f"""Based on the following context, answer the question.
+        prompt = f"""You are a research assistant. Based on the following context, answer the question.
 
-Context:
-{context_text[:2000]}
+Context from documents:
+{context_text}
 
 Question: {query}
 
-Answer based only on the context above:"""
+Provide a clear, accurate answer based ONLY on the context above. 
+IMPORTANT: Add inline citations using [Source: filename, Page: X] format after each claim or fact.
+If the context doesn't contain enough information, say so.
+
+Answer:"""
         
         result = self.llm_client.generate(
-            prompt=simple_prompt,
+            prompt=prompt,
             max_tokens=400,
             temperature=0.1
         )
@@ -487,7 +502,7 @@ class VerificationAgent(BaseAgent):
         
         context_text = "\n".join([doc[:1000] for doc in retrieved_docs[:3]])  # Increased for verification
         
-        prompt = f"""Verify if the answer is supported by the context.
+        prompt = f"""Verify if the answer is supported by the context and check citation accuracy.
 
 Context:
 {context_text}
@@ -495,10 +510,15 @@ Context:
 Question: {user_query}
 Answer: {answer}
 
-Does the answer align with the context? Rate confidence (0.0-1.0) and list any issues.
+Verification checklist:
+1. Does the answer align with the context?
+2. Are citations present and accurate?
+3. Are technical terms used correctly?
+4. Is any information contradicted by the context?
 
 Response format:
 Confidence: [0.0-1.0]
+Citation Quality: [good/partial/missing]
 Issues: [list issues or "None"]"""
 
         result = self.llm_client.generate(

@@ -184,9 +184,17 @@ class HybridRetrievalAgent:
         
         logger.info(f"🔢 Searching for sections: {sections}")
         
-        # Get all documents
-        all_docs = getattr(self.vs, 'documents', [])
-        all_metas = getattr(self.vs, 'metadatas', [])
+        # Get all documents with error handling
+        try:
+            all_docs = getattr(self.vs, 'documents', [])
+            all_metas = getattr(self.vs, 'metadatas', [])
+            
+            if not all_docs:
+                logger.warning("⚠️ Vector store is empty for section search")
+                return results
+        except Exception as e:
+            logger.error(f"❌ Section search failed: {e}")
+            return results
         
         for section in sections:
             for i, (doc, meta) in enumerate(zip(all_docs, all_metas)):
@@ -280,7 +288,10 @@ class HybridRetrievalAgent:
         section_results: List[SearchResult],
         query: str
     ) -> List[SearchResult]:
-        """Merge results from all sources and re-rank"""
+        """Merge results from all sources and re-rank with query relevance boost"""
+        
+        # Extract query keywords for relevance boost
+        query_keywords = self._extract_keywords(query)
         
         # Combine all results
         all_results = []
@@ -310,7 +321,7 @@ class HybridRetrievalAgent:
             if doc_scores[doc_hash]['result'] is None:
                 doc_scores[doc_hash]['result'] = result
         
-        # Calculate final scores
+        # Calculate final scores with query relevance boost
         for doc_hash, data in doc_scores.items():
             if data['result'] is None:
                 continue
@@ -323,7 +334,11 @@ class HybridRetrievalAgent:
             if source_count > 1:
                 final_score *= (1 + 0.1 * (source_count - 1))
             
+            # Query relevance boost: check if document contains query keywords
             result = data['result']
+            keyword_relevance = self._calculate_keyword_score(result.document, query_keywords)
+            final_score += keyword_relevance * 0.15  # 15% boost for query keyword matches
+            
             result.score = final_score
             result.source = '+'.join(sorted(set(s for s, _ in data['scores'])))
             all_results.append(result)

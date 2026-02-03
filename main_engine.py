@@ -114,13 +114,25 @@ class Orchestrator:
             try:
                 result = TRANSLATOR.translate(query, dest='en')
                 if result and result.text:
-                    print(f"🌐 TRANSLATION (API): '{query}' -> '{result.text}'")
+                    print(f"🌐 TRANSLATION (googletrans): '{query}' -> '{result.text}'")
                     return result.text, original_lang
             except Exception as e:
-                print(f"Translation API error: {e}")
+                print(f"⚠️ Googletrans error: {e}, trying deep-translator...")
         
-        # Last resort: return original
-        print(f"🌐 TRANSLATION: No translation available for '{query}'")
+        # Fallback 2: deep-translator
+        try:
+            from deep_translator import GoogleTranslator
+            result = GoogleTranslator(source='auto', target='en').translate(query)
+            if result:
+                print(f"🌐 TRANSLATION (deep-translator): '{query}' -> '{result}'")
+                return result, original_lang
+        except Exception as e:
+            print(f"⚠️ Deep-translator error: {e}")
+        
+        # Last resort: if query is non-English, warn user
+        if original_lang != 'en':
+            print(f"❌ TRANSLATION FAILED: Unable to translate '{query}'. Query may fail.")
+        
         return query, original_lang
     
     def _detect_query_type(self, user_query: str) -> str:
@@ -207,19 +219,19 @@ class Orchestrator:
             print("Handling as casual query (no RAG needed)")
             return self._handle_casual_query(user_query)
         
-        # Cache disabled to prevent stale responses
-        # cached_response = self.cache.get(user_query)
-        # if cached_response:
-        #     print(f" CACHE HIT: Returning cached response")
-        #     cached_response['from_cache'] = True
-        #     cached_response['execution_log'] = [{
-        #         "step": "cache_hit",
-        #         "timestamp": time.time(),
-        #         "details": {"cached": True, "original_cache_time": cached_response.get('created_at')}
-        #     }]
-        #     return cached_response
+        # Try cache for specialized queries
+        cached_response = self.cache.get(user_query)
+        if cached_response:
+            print(f"💾 CACHE HIT: Returning cached response")
+            cached_response['from_cache'] = True
+            cached_response['execution_log'] = [{
+                "step": "cache_hit",
+                "timestamp": time.time(),
+                "details": {"cached": True, "original_cache_time": cached_response.get('created_at')}
+            }]
+            return cached_response
         
-        print(" CACHE DISABLED: Processing query normally")
+        print("🔍 CACHE MISS: Processing query normally")
         context = {"user_query": user_query, "original_query": original_query, "original_lang": original_lang}
         
         print("PHASE 1: Query Understanding")
@@ -355,10 +367,10 @@ class Orchestrator:
             "artifact": artifact
         }
         
-        # Cache disabled to prevent stale responses
-        # if response['success']:
-        #     self.cache.set(user_query, response)
-        #     print(" CACHE: Response cached for future use")
+        # Cache successful responses with high confidence
+        if response['success'] and response.get('confidence', 0) >= 0.7:
+            self.cache.set(user_query, response)
+            print("💾 CACHE: Response cached for future use")
         
         return response
     

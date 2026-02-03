@@ -92,7 +92,7 @@ async def startup():
     
     llm_client = LLMClient(base_url="http://127.0.0.1:8080")
     vector_store = VectorStore(persist_directory="./faiss_db")
-    processor = DocumentProcessor(vector_store, chunk_size=500, chunk_overlap=50)
+    processor = DocumentProcessor(vector_store, chunk_size=800, chunk_overlap=160)
     cache = get_cache()
     
     try:
@@ -112,15 +112,43 @@ async def startup():
 
 @app.get("/api/health")
 async def health():
-    llm_available = False
+    llm_status = llm_client.health_check()
+    multimodal_status = llm_client.multimodal_health_check()
+    
+    return {
+        "status": "ok" if llm_status else "degraded",
+        "llm_available": llm_status,
+        "multimodal_available": multimodal_status
+    }
+
+@app.get("/api/health/detailed")
+async def detailed_health():
+    """Detailed health check with all system components"""
+    from datetime import datetime
+    
+    # Get vector store stats
     try:
-        import httpx
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            resp = await client.get("http://127.0.0.1:8080/health")
-            llm_available = resp.status_code == 200
+        vs_stats = {
+            "document_count": len(set(m.get('source', '') for m in vector_store.metadatas)) if hasattr(vector_store, 'metadatas') else 0,
+            "chunk_count": len(vector_store.documents) if hasattr(vector_store, 'documents') else 0
+        }
     except:
-        pass
-    return {"status": "ok", "llm_available": llm_available}
+        vs_stats = {"document_count": 0, "chunk_count": 0}
+    
+    # Get cache stats
+    try:
+        cache_stats = cache.get_stats()
+    except:
+        cache_stats = {"total_entries": 0, "reuse_rate": 0}
+    
+    return {
+        "llm_status": llm_client.health_check(),
+        "multimodal_status": llm_client.multimodal_health_check(),
+        "image_captioner_available": image_captioner is not None,
+        "vector_store": vs_stats,
+        "cache": cache_stats,
+        "timestamp": datetime.now().isoformat()
+    }
 
 @app.get("/api/stats", response_model=KBStats)
 async def get_stats():
@@ -336,7 +364,7 @@ async def clear_kb():
         vector_store = VectorStore(persist_directory="./faiss_db")
         
         global processor
-        processor = DocumentProcessor(vector_store, chunk_size=500, chunk_overlap=50)
+        processor = DocumentProcessor(vector_store, chunk_size=800, chunk_overlap=160)
         
         # Clear all cache entries when KB is cleared
         cache.clear_all()
