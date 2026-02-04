@@ -10,7 +10,14 @@ class VectorStore:
         self.persist_directory = persist_directory
         os.makedirs(persist_directory, exist_ok=True)
         
-        self.embedding_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+        # Use local cache for offline operation
+        cache_dir = os.path.join(os.path.dirname(__file__), 'model_cache')
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        self.embedding_model = SentenceTransformer(
+            'sentence-transformers/all-MiniLM-L6-v2',
+            cache_folder=cache_dir
+        )
         self.dimension = 384
         
         self.index_path = os.path.join(persist_directory, "index.faiss")

@@ -1,0 +1,31 @@
+/* Font Awesome Icons - Offline Unicode Fallback */
+.fa,.fas{font-style:normal;font-variant:normal;text-rendering:auto;line-height:1;display:inline-block;font-size:inherit}
+.fa-bars::before{content:"☰"}
+.fa-search::before{content:"🔍"}
+.fa-circle::before{content:"●"}
+.fa-briefcase::before{content:"💼"}
+.fa-chevron-down::before{content:"▼"}
+.fa-plus::before{content:"+"}
+.fa-upload::before{content:"⬆"}
+.fa-folder::before{content:"📁"}
+.fa-project-diagram::before{content:"🗺"}
+.fa-download::before{content:"⬇"}
+.fa-trash::before{content:"🗑"}
+.fa-paper-plane::before{content:"▶"}
+.fa-times::before{content:"✕"}
+.fa-file-alt::before{content:"📄"}
+.fa-file-pdf::before{content:"📕"}
+.fa-image::before{content:"🖼"}
+.fa-microphone::before{content:"🎤"}
+.fa-copy::before{content:"📋"}
+.fa-check::before{content:"✓"}
+.fa-spinner::before{content:"⟳"}
+.fa-exclamation-triangle::before{content:"⚠"}
+.fa-cog::before{content:"⚙"}
+.fa-info-circle::before{content:"ℹ"}
+.mr-1{margin-right:.25rem}
+.mr-2{margin-right:.5rem}
+.ml-1{margin-left:.25rem}
+.ml-2{margin-left:.5rem}
+.ml-auto{margin-left:auto}
+.text-xs{font-size:.75rem}
