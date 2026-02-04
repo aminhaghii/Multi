@@ -11,7 +11,6 @@ class ImageCaptioner:
         print(f"Loading BLIP image captioning model on {self.device}...")
         
         # Use local cache for offline operation
-        import os
         cache_dir = os.path.join(os.path.dirname(__file__), 'model_cache')
         os.makedirs(cache_dir, exist_ok=True)
         

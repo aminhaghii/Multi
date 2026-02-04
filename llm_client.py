@@ -2,6 +2,7 @@ import sys
 import os
 import requests
 import json
+import time
 from pathlib import Path
 
 # Add current directory to path
@@ -51,7 +52,7 @@ class LLMClient:
         try:
             response = requests.get(f"{self.base_url}/health", timeout=5)
             return response.status_code == 200
-        except:
+        except (requests.RequestException, Exception):
             return False
     
     def multimodal_health_check(self):
@@ -59,7 +60,7 @@ class LLMClient:
         try:
             response = requests.get(f"{self.multimodal_base_url}/health", timeout=5)
             return response.status_code == 200
-        except:
+        except (requests.RequestException, Exception):
             return False
     
     def generate(self, prompt: str, max_tokens: int = 400, temperature: float = 0.6, top_p: float = 0.9, stop: list = None, max_retries: int = 3):
@@ -91,7 +92,6 @@ class LLMClient:
                 print(f"Direct generation failed: {e}")
         
         # Fallback to HTTP with retry logic
-        import time
         
         for attempt in range(max_retries):
             try:

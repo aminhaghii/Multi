@@ -506,6 +506,7 @@ class Orchestrator:
     
     def _convert_to_html_paragraphs(self, text: str) -> str:
         """Convert plain text to HTML paragraphs"""
+        import re
         paragraphs = text.split('\n\n')
         html_parts = []
         for p in paragraphs:
@@ -513,12 +514,10 @@ class Orchestrator:
                 # Check if it's a heading
                 if p.startswith('##'):
                     html_parts.append(f'<h2>{p.replace("##", "").strip()}</h2>')
-                elif p.startswith('**') or '**' in p:
-                    # Bold text
-                    p_html = p.replace('**', '<strong>').replace('**', '</strong>')
-                    html_parts.append(f'<p>{p_html}</p>')
                 else:
-                    html_parts.append(f'<p>{p}</p>')
+                    # Convert **bold** to <strong>bold</strong> using regex
+                    p_html = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', p)
+                    html_parts.append(f'<p>{p_html}</p>')
         return '\n'.join(html_parts)
     
     def _build_error_response(self, message: str, details: Dict[str, Any]) -> Dict[str, Any]:

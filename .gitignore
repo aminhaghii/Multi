@@ -24,6 +24,7 @@ history/
 
 # Large models and binaries
 models/
+model_cache/
 *.dll
 *.exe
 

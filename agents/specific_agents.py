@@ -364,18 +364,8 @@ Think step-by-step and provide a clear, concise answer.
 
 Answer:"""
         
-        # DEBUG: Print the exact prompt being sent to LLM
-        print("\n" + "="*80)
-        print("[DEBUG] FULL PROMPT SENT TO LLM:")
-        print("="*80)
-        print(prompt)
-        print("="*80)
-        print(f"[DEBUG] Prompt length: {len(prompt)} chars")
-        print(f"[DEBUG] Contains '3.2.8': {'3.2.8' in prompt}")
-        print(f"[DEBUG] Contains '3.2.9': {'3.2.9' in prompt}")
-        print(f"[DEBUG] Contains 'sensitivity': {'sensitivity' in prompt.lower()}")
-        print(f"[DEBUG] Contains 'worst case': {'worst case' in prompt.lower()}")
-        print("="*80 + "\n")
+        # Log prompt length for monitoring (remove verbose debug in production)
+        self.log(f"Prompt length: {len(prompt)} chars")
         
         if use_multimodal:
             result = self.llm_client.generate_with_images(

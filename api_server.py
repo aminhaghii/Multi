@@ -334,6 +334,8 @@ async def upload_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+MAX_FILE_SIZE_MB = 50  # Maximum file size in MB
+
 @app.post("/api/upload/document")
 async def upload_document(file: UploadFile = File(...)):
     allowed_extensions = ['.pdf', '.docx', '.doc', '.md', '.txt', '.rtf']
@@ -341,10 +343,18 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Unsupported document type")
 
     os.makedirs("./data", exist_ok=True)
-    file_path = f"./data/{file.filename}"
+    
+    # Read content and check size
+    content = await file.read()
+    file_size_mb = len(content) / (1024 * 1024)
+    if file_size_mb > MAX_FILE_SIZE_MB:
+        raise HTTPException(status_code=400, detail=f"File too large. Maximum size is {MAX_FILE_SIZE_MB}MB")
+    
+    # Sanitize filename
+    safe_filename = "".join(c for c in file.filename if c.isalnum() or c in '._-')
+    file_path = f"./data/{safe_filename}"
 
     with open(file_path, "wb") as f:
-        content = await file.read()
         f.write(content)
 
     try:
@@ -539,30 +549,16 @@ async def get_documents_list():
 @app.delete("/api/documents/{file_hash}")
 async def delete_document(file_hash: str):
     try:
-        indices_to_delete = []
-        for idx, metadata in enumerate(vector_store.metadatas):
-            if metadata.get('file_hash') == file_hash:
-                indices_to_delete.append(idx)
+        # Use the efficient delete method
+        deleted_count = vector_store.delete_by_file_hash(file_hash)
         
-        if not indices_to_delete:
+        if deleted_count == 0:
             return {"success": False, "error": "Document not found"}
         
-        for idx in sorted(indices_to_delete, reverse=True):
-            del vector_store.documents[idx]
-            del vector_store.metadatas[idx]
-            del vector_store.ids[idx]
+        # Invalidate cache after deletion
+        cache.invalidate_by_kb()
         
-        new_embeddings = []
-        for doc in vector_store.documents:
-            new_embeddings.append(vector_store._generate_embedding(doc))
-        
-        vector_store.index = faiss.IndexFlatL2(vector_store.dimension)
-        if new_embeddings:
-            vector_store.index.add(np.array(new_embeddings))
-        
-        vector_store._save()
-        
-        return {"success": True, "message": f"Deleted {len(indices_to_delete)} chunks"}
+        return {"success": True, "message": f"Deleted {deleted_count} chunks"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 

@@ -54,11 +54,23 @@ class ResponseCache:
         normalized_query = user_query.strip().lower()
         return hashlib.sha256(normalized_query.encode()).hexdigest()
     
-    def _generate_kb_hash(self) -> str:
+    def _generate_kb_hash(self, vector_store=None) -> str:
         """Generate hash representing current knowledge base state"""
         try:
-            from vector_store import VectorStore
-            vs = VectorStore()
+            # Use passed vector_store or try to get from global
+            vs = vector_store
+            if vs is None:
+                # Try to import and use existing instance
+                try:
+                    from vector_store import VectorStore
+                    import os
+                    # Check if index exists to avoid creating new one
+                    if os.path.exists("./faiss_db/index.faiss"):
+                        vs = VectorStore(persist_directory="./faiss_db")
+                    else:
+                        return hashlib.md5("empty_kb".encode()).hexdigest()
+                except Exception:
+                    return hashlib.md5("fallback_kb_state".encode()).hexdigest()
             
             # Simple hash based on document count and total chunks
             doc_count = len(set(meta.get('source', '') for meta in vs.metadatas))
@@ -66,7 +78,7 @@ class ResponseCache:
             
             kb_state = f"{doc_count}_{chunk_count}_{len(vs.ids)}"
             return hashlib.md5(kb_state.encode()).hexdigest()
-        except:
+        except Exception:
             # Fallback if vector store not available
             return hashlib.md5("fallback_kb_state".encode()).hexdigest()
     
@@ -91,11 +103,20 @@ class ResponseCache:
             
             response_data, created_at, ttl_hours, access_count = row
             
-            # Check if expired
-            created_time = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            # Check if expired - use naive datetime comparison
+            try:
+                # Handle various datetime formats from SQLite
+                created_at_clean = created_at.replace('Z', '').replace('+00:00', '')
+                created_time = datetime.fromisoformat(created_at_clean)
+            except ValueError:
+                # Fallback: treat as expired if can't parse
+                cursor.execute("DELETE FROM cached_responses WHERE query_hash = ?", (query_hash,))
+                conn.commit()
+                return None
+            
             expiry_time = created_time + timedelta(hours=ttl_hours)
             
-            if datetime.now(expiry_time.tzinfo) > expiry_time:
+            if datetime.now() > expiry_time:
                 # Delete expired entry
                 cursor.execute("DELETE FROM cached_responses WHERE query_hash = ?", (query_hash,))
                 conn.commit()

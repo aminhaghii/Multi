@@ -381,9 +381,14 @@
         async function fetchStats() {
             try {
                 const res = await fetch('/api/stats');
+                if (!res.ok) throw new Error('Failed to fetch stats');
                 const data = await res.json();
-                document.getElementById('doc-count').textContent = data.total_documents || 0;
-            } catch (e) {}
+                const docCount = data.document_count ?? data.total_documents ?? 0;
+                document.getElementById('doc-count').textContent = docCount;
+            } catch (e) {
+                console.error('Failed to fetch stats', e);
+                document.getElementById('doc-count').textContent = '0';
+            }
         }
 
         async function loadSessions() {
@@ -1078,13 +1083,18 @@
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({chat_history: chatHistory, format: format})
             })
-            .then(res => res.blob())
+            .then(res => {
+                if (!res.ok) throw new Error('Export request failed');
+                return res.blob();
+            })
             .then(blob => {
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `chat_export.${format === 'html' ? 'html' : 'md'}`;
+                a.download = `chat_export.${format === 'html' ? 'html' : format === 'pdf' ? 'pdf' : 'md'}`;
                 a.click();
+                // Clean up blob URL to prevent memory leak
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
             })
             .catch(e => alert('Export failed: ' + e.message));
         }

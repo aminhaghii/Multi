@@ -23,30 +23,70 @@ class VectorStore:
         self.index_path = os.path.join(persist_directory, "index.faiss")
         self.metadata_path = os.path.join(persist_directory, "metadata.pkl")
         
-        if os.path.exists(self.index_path):
-            self.index = faiss.read_index(self.index_path)
-            with open(self.metadata_path, 'rb') as f:
-                data = pickle.load(f)
-                self.documents = data['documents']
-                self.metadatas = data['metadatas']
-                self.ids = data['ids']
+        if os.path.exists(self.index_path) and os.path.exists(self.metadata_path):
+            try:
+                self.index = faiss.read_index(self.index_path)
+                with open(self.metadata_path, 'rb') as f:
+                    data = pickle.load(f)
+                    self.documents = data.get('documents', [])
+                    self.metadatas = data.get('metadatas', [])
+                    self.ids = data.get('ids', [])
+                # Validate data consistency
+                if len(self.documents) != self.index.ntotal:
+                    print(f"Warning: Index mismatch. Rebuilding index...")
+                    self._rebuild_index()
+            except (pickle.UnpicklingError, EOFError, KeyError) as e:
+                print(f"Warning: Corrupt data files, starting fresh: {e}")
+                self._init_empty()
+            except Exception as e:
+                print(f"Warning: Failed to load vector store: {e}")
+                self._init_empty()
         else:
-            self.index = faiss.IndexFlatL2(self.dimension)
-            self.documents = []
-            self.metadatas = []
-            self.ids = []
+            self._init_empty()
+    
+    def _init_empty(self):
+        """Initialize empty vector store"""
+        self.index = faiss.IndexFlatL2(self.dimension)
+        self.documents = []
+        self.metadatas = []
+        self.ids = []
+    
+    def _rebuild_index(self):
+        """Rebuild FAISS index from documents"""
+        self.index = faiss.IndexFlatL2(self.dimension)
+        if self.documents:
+            embeddings = np.array([self._generate_embedding(doc) for doc in self.documents])
+            self.index.add(embeddings)
+            self._save()
     
     def _generate_embedding(self, text: str) -> np.ndarray:
         embedding = self.embedding_model.encode(text, convert_to_numpy=True)
         return embedding.astype('float32')
     
     def add_documents(self, texts: List[str], metadatas: List[Dict[str, Any]], ids: List[str]):
-        embeddings = np.array([self._generate_embedding(text) for text in texts])
+        # Filter out duplicates by ID
+        existing_ids = set(self.ids)
+        new_texts = []
+        new_metadatas = []
+        new_ids = []
+        
+        for text, meta, doc_id in zip(texts, metadatas, ids):
+            if doc_id not in existing_ids:
+                new_texts.append(text)
+                new_metadatas.append(meta)
+                new_ids.append(doc_id)
+                existing_ids.add(doc_id)
+        
+        if not new_texts:
+            print("No new documents to add (all duplicates)")
+            return
+        
+        embeddings = np.array([self._generate_embedding(text) for text in new_texts])
         
         self.index.add(embeddings)
-        self.documents.extend(texts)
-        self.metadatas.extend(metadatas)
-        self.ids.extend(ids)
+        self.documents.extend(new_texts)
+        self.metadatas.extend(new_metadatas)
+        self.ids.extend(new_ids)
         
         self._save()
     
@@ -96,3 +136,31 @@ class VectorStore:
     
     def get_collection_count(self) -> int:
         return len(self.documents)
+    
+    def delete_by_file_hash(self, file_hash: str) -> int:
+        """Delete documents by file hash efficiently"""
+        indices_to_keep = []
+        deleted_count = 0
+        
+        for i, meta in enumerate(self.metadatas):
+            if meta.get('file_hash') != file_hash:
+                indices_to_keep.append(i)
+            else:
+                deleted_count += 1
+        
+        if deleted_count == 0:
+            return 0
+        
+        # Rebuild with only kept documents
+        self.documents = [self.documents[i] for i in indices_to_keep]
+        self.metadatas = [self.metadatas[i] for i in indices_to_keep]
+        self.ids = [self.ids[i] for i in indices_to_keep]
+        
+        # Rebuild index
+        self._rebuild_index()
+        
+        return deleted_count
+    
+    def get_unique_sources(self) -> List[str]:
+        """Get list of unique source files"""
+        return list(set(meta.get('source', '') for meta in self.metadatas))
