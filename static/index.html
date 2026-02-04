@@ -13,7 +13,10 @@
             --secondary: #475569;
             --accent: #0891b2;
         }
-        body { font-family: 'Inter', system-ui, sans-serif; }
+        body {
+            font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+            background: radial-gradient(circle at top, #f8fafc 0%, #eef2ff 45%, #f1f5f9 100%);
+        }
         .scrollbar-thin::-webkit-scrollbar { width: 6px; }
         .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
         .scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
@@ -21,11 +24,40 @@
         @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .session-card:hover { background: #f1f5f9; }
         .session-card.active { background: #e0f2fe; border-left: 3px solid var(--accent); }
+        header {
+            background: linear-gradient(90deg, #ffffff 0%, #f8fafc 100%);
+            box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+        }
+        #sidebar {
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            box-shadow: 8px 0 20px rgba(15, 23, 42, 0.04);
+        }
+        #session-bar {
+            background: linear-gradient(90deg, #ffffff 0%, #f8fafc 100%);
+        }
+        #messages {
+            background: linear-gradient(180deg, rgba(248, 250, 252, 0.7) 0%, rgba(241, 245, 249, 0.4) 100%);
+        }
+        .shadow-soft {
+            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+        }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.72);
+            backdrop-filter: blur(18px);
+            border: 1px solid rgba(226, 232, 240, 0.7);
+        }
+        .workspace-pill {
+            background: linear-gradient(135deg, rgba(14, 116, 144, 0.12), rgba(79, 70, 229, 0.12));
+            border: 1px solid rgba(148, 163, 184, 0.35);
+        }
+        .workspace-menu {
+            box-shadow: 0 20px 45px rgba(15, 23, 42, 0.18);
+        }
     </style>
 </head>
 <body class="bg-slate-50 h-screen flex flex-col">
     <!-- Header -->
-    <header class="h-16 bg-white border-b border-slate-200 flex items-center px-4 shrink-0">
+    <header class="h-16 bg-white border-b border-slate-200 flex items-center px-4 shrink-0 shadow-soft">
         <div class="flex items-center gap-3">
             <button id="toggle-sidebar" class="p-2 hover:bg-slate-100 rounded-lg lg:hidden">
                 <i class="fas fa-bars text-slate-600"></i>
@@ -42,7 +74,18 @@
                 <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
             </div>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-3">
+            <div class="relative">
+                <button id="workspace-toggle" onclick="toggleWorkspaceMenu()" class="workspace-pill px-3 py-1.5 rounded-full text-xs font-semibold text-slate-700 flex items-center gap-2">
+                    <i class="fas fa-briefcase text-slate-500"></i>
+                    <span id="workspace-label">Default Workspace</span>
+                    <i class="fas fa-chevron-down text-[10px] text-slate-400"></i>
+                </button>
+                <div id="workspace-menu" class="workspace-menu glass-panel absolute right-0 mt-2 w-56 rounded-xl p-2 hidden">
+                    <div class="text-xs uppercase tracking-wider text-slate-400 px-2 py-1">Workspaces</div>
+                    <div id="workspace-options" class="space-y-1"></div>
+                </div>
+            </div>
             <span id="llm-status" class="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
                 <i class="fas fa-circle text-xs mr-1"></i> LLM Online
             </span>
@@ -51,11 +94,11 @@
 
     <div class="flex-1 flex overflow-hidden">
         <!-- Left Sidebar - History -->
-        <aside id="sidebar" class="w-72 bg-white border-r border-slate-200 flex flex-col shrink-0 transition-transform lg:translate-x-0 -translate-x-full fixed lg:relative h-[calc(100vh-4rem)] z-20">
+        <aside id="sidebar" class="w-72 bg-white border-r border-slate-200 flex flex-col shrink-0 transition-transform lg:translate-x-0 -translate-x-full fixed lg:relative h-[calc(100vh-4rem)] z-20 shadow-soft">
             <!-- New Chat Button -->
             <div class="p-4 border-b border-slate-200">
                 <button id="new-chat-btn" onclick="createNewSession()" 
-                        class="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-all flex items-center justify-center gap-2">
+                        class="w-full py-3 px-4 bg-gradient-to-br from-slate-900 to-slate-700 hover:from-slate-800 hover:to-slate-600 text-white rounded-lg font-medium transition-all flex items-center justify-center gap-2 shadow-soft">
                     <i class="fas fa-plus"></i>
                     New Chat
                 </button>
@@ -77,7 +120,7 @@
             <div class="p-3 border-t border-slate-200 space-y-2">
                 <button onclick="showUploadModal()" class="w-full py-2 px-3 text-left text-sm text-slate-600 hover:bg-slate-100 rounded-lg flex items-center gap-2">
                     <i class="fas fa-upload text-blue-500"></i>
-                    Upload Documents
+                    Upload Files
                 </button>
                 <button onclick="showDocuments()" class="w-full py-2 px-3 text-left text-sm text-slate-600 hover:bg-slate-100 rounded-lg flex items-center gap-2">
                     <i class="fas fa-folder text-slate-400"></i>
@@ -102,7 +145,7 @@
         <!-- Main Chat Area -->
         <main class="flex-1 flex flex-col min-w-0">
             <!-- Session Info Bar -->
-            <div id="session-bar" class="h-12 bg-white border-b border-slate-200 flex items-center px-4 shrink-0">
+            <div id="session-bar" class="h-12 bg-white border-b border-slate-200 flex items-center px-4 shrink-0 shadow-soft">
                 <span id="session-title" class="font-medium text-slate-700">New Conversation</span>
                 <span id="session-meta" class="ml-3 text-xs text-slate-400"></span>
                 <div class="ml-auto flex items-center gap-2">
@@ -120,7 +163,7 @@
             </div>
 
             <!-- Input Area -->
-            <div class="bg-white border-t border-slate-200 p-4 shrink-0">
+            <div class="bg-white border-t border-slate-200 p-4 shrink-0 shadow-soft">
                 <div class="max-w-4xl mx-auto">
                     <div class="flex gap-3">
                         <div class="flex-1 relative">
@@ -129,7 +172,7 @@
                                       onkeydown="handleKeyDown(event)"></textarea>
                         </div>
                         <button id="send-btn" onclick="sendMessage()" 
-                                class="p-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-all">
+                                class="p-3 bg-gradient-to-br from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl transition-all shadow-soft">
                             <i class="fas fa-paper-plane"></i>
                         </button>
                     </div>
@@ -167,9 +210,9 @@
 
     <!-- Upload Modal -->
     <div id="upload-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div class="bg-white rounded-2xl w-full max-w-md p-6">
+        <div class="bg-white rounded-2xl w-full max-w-md p-6 shadow-soft">
             <div class="flex items-center justify-between mb-4">
-                <h2 class="text-xl font-bold text-slate-800">Upload Documents</h2>
+                <h2 class="text-xl font-bold text-slate-800">Upload Files</h2>
                 <button onclick="closeUploadModal()" class="text-slate-400 hover:text-slate-600">
                     <i class="fas fa-times text-xl"></i>
                 </button>
@@ -177,8 +220,8 @@
             
             <div class="space-y-4">
                 <div class="flex gap-2">
-                    <button onclick="setUploadType('pdf')" id="btn-pdf" class="flex-1 py-3 rounded-lg font-medium transition-all bg-blue-600 text-white">
-                        <i class="fas fa-file-pdf mr-2"></i>PDF
+                    <button onclick="setUploadType('document')" id="btn-doc" class="flex-1 py-3 rounded-lg font-medium transition-all bg-blue-600 text-white">
+                        <i class="fas fa-file-alt mr-2"></i>Docs
                     </button>
                     <button onclick="setUploadType('image')" id="btn-image" class="flex-1 py-3 rounded-lg font-medium transition-all bg-slate-200 text-slate-600 hover:bg-slate-300">
                         <i class="fas fa-image mr-2"></i>Image
@@ -258,13 +301,59 @@
         let currentSessionId = null;
         let chatHistory = [];
         let sessions = [];
-        let uploadType = 'pdf';
+        let uploadType = 'document';
+        let currentWorkspace = localStorage.getItem('workspace_id') || 'default';
+        const workspaces = [
+            { id: 'default', name: 'Default Workspace' },
+            { id: 'research', name: 'Research Workspace' },
+            { id: 'analysis', name: 'Analysis Lab' }
+        ];
 
         async function init() {
             await loadSessions();
             await checkLLMStatus();
             await fetchStats();
+            renderWorkspaces();
+            setUploadType('document');
         }
+
+        function renderWorkspaces() {
+            const options = document.getElementById('workspace-options');
+            if (!options) return;
+            options.innerHTML = '';
+            workspaces.forEach(ws => {
+                const btn = document.createElement('button');
+                btn.className = `w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${ws.id === currentWorkspace ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'}`;
+                btn.textContent = ws.name;
+                btn.onclick = () => selectWorkspace(ws.id);
+                options.appendChild(btn);
+            });
+            const active = workspaces.find(ws => ws.id === currentWorkspace);
+            document.getElementById('workspace-label').textContent = active ? active.name : 'Workspace';
+        }
+
+        function toggleWorkspaceMenu() {
+            const menu = document.getElementById('workspace-menu');
+            if (!menu) return;
+            menu.classList.toggle('hidden');
+        }
+
+        function selectWorkspace(workspaceId) {
+            currentWorkspace = workspaceId;
+            localStorage.setItem('workspace_id', workspaceId);
+            renderWorkspaces();
+            const menu = document.getElementById('workspace-menu');
+            if (menu) menu.classList.add('hidden');
+        }
+
+        document.addEventListener('click', (event) => {
+            const menu = document.getElementById('workspace-menu');
+            const toggle = document.getElementById('workspace-toggle');
+            if (!menu || !toggle) return;
+            if (!menu.contains(event.target) && !toggle.contains(event.target)) {
+                menu.classList.add('hidden');
+            }
+        });
 
         async function checkLLMStatus() {
             try {
@@ -432,10 +521,10 @@
             addMessage('user', message);
             chatHistory.push({role: 'user', content: message});
 
-            showTypingIndicator();
+            const phasePanel = showPhasePanel();
 
             try {
-                const res = await fetch('/api/chat', {
+                const res = await fetch('/api/chat/stream', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
@@ -443,10 +532,130 @@
                         session_id: currentSessionId
                     })
                 });
-                
-                const data = await res.json();
-                hideTypingIndicator();
 
+                await handleStreamResponse(res, phasePanel);
+            } catch (e) {
+                markPhaseError(phasePanel, 'Network error');
+                addMessage('assistant', 'Failed to get response: ' + e.message, {error: true});
+            }
+        }
+
+        function showPhasePanel() {
+            const container = document.getElementById('messages');
+            const wrapper = document.createElement('div');
+            wrapper.className = 'message-enter flex justify-start';
+            wrapper.innerHTML = `
+                <div class="glass-panel shadow-soft rounded-2xl px-4 py-3 max-w-2xl w-full">
+                    <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Process</div>
+                    <div class="space-y-3 text-sm" data-phase-list>
+                        <div class="hidden" data-phase="query_understanding">
+                            <div class="flex items-center justify-between">
+                                <span class="text-slate-700">Phase 1 — Query Understanding</span>
+                                <span class="phase-status text-slate-400">Pending</span>
+                            </div>
+                            <div class="text-xs text-slate-500 mt-1 hidden whitespace-pre-line" data-phase-detail="query_understanding"></div>
+                        </div>
+                        <div class="hidden" data-phase="retrieval">
+                            <div class="flex items-center justify-between">
+                                <span class="text-slate-700">Phase 2 — Retrieval</span>
+                                <span class="phase-status text-slate-400">Pending</span>
+                            </div>
+                            <div class="text-xs text-slate-500 mt-1 hidden whitespace-pre-line" data-phase-detail="retrieval"></div>
+                        </div>
+                        <div class="hidden" data-phase="reasoning">
+                            <div class="flex items-center justify-between">
+                                <span class="text-slate-700">Phase 3 — Reasoning</span>
+                                <span class="phase-status text-slate-400">Pending</span>
+                            </div>
+                            <div class="text-xs text-slate-500 mt-1 hidden whitespace-pre-line" data-phase-detail="reasoning"></div>
+                        </div>
+                        <div class="hidden" data-phase="verification">
+                            <div class="flex items-center justify-between">
+                                <span class="text-slate-700">Phase 4 — Verification</span>
+                                <span class="phase-status text-slate-400">Pending</span>
+                            </div>
+                            <div class="text-xs text-slate-500 mt-1 hidden whitespace-pre-line" data-phase-detail="verification"></div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.appendChild(wrapper);
+            container.scrollTop = container.scrollHeight;
+            return wrapper;
+        }
+
+        function revealPhase(panel, key) {
+            const row = panel.querySelector(`[data-phase="${key}"]`);
+            if (!row) return;
+            row.classList.remove('hidden');
+        }
+
+        function setPhaseStatus(panel, key, status) {
+            const row = panel.querySelector(`[data-phase="${key}"]`);
+            if (!row) return;
+            const statusEl = row.querySelector('.phase-status');
+            statusEl.textContent = status;
+            statusEl.className = 'phase-status text-slate-400';
+            if (status === 'Running') {
+                statusEl.classList.add('text-blue-600');
+            } else if (status === 'Done') {
+                statusEl.classList.add('text-green-600');
+            } else if (status === 'Error') {
+                statusEl.classList.add('text-red-600');
+            }
+        }
+
+        async function handleStreamResponse(response, phasePanel) {
+            if (!response.body) {
+                throw new Error('Streaming not supported');
+            }
+
+            if (!response.ok) {
+                throw new Error(`Stream error: ${response.status}`);
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const normalized = buffer.replace(/\r\n/g, '\n');
+
+                const parts = normalized.split('\n\n');
+                buffer = parts.pop() || '';
+                parts.forEach(part => {
+                    const lines = part.split('\n').filter(item => item.startsWith('data:'));
+                    lines.forEach(line => {
+                        const jsonText = line.replace('data:', '').trim();
+                        if (!jsonText) return;
+                        const payload = JSON.parse(jsonText);
+                        handleStreamEvent(payload, phasePanel);
+                    });
+                });
+            }
+        }
+
+        function handleStreamEvent(event, panel) {
+            if (event.type === 'progress') {
+                const payload = event.payload || {};
+                if (payload.type === 'phase_start') {
+                    revealPhase(panel, payload.phase);
+                    setPhaseStatus(panel, payload.phase, 'Running');
+                    updatePhaseDetail(panel, payload.phase, payload.message || '', false);
+                }
+                if (payload.type === 'phase_text') {
+                    updatePhaseDetail(panel, payload.phase, payload.text || '', payload.append);
+                }
+                if (payload.type === 'phase_end') {
+                    setPhaseStatus(panel, payload.phase, 'Done');
+                }
+            }
+
+            if (event.type === 'final') {
+                const data = event.payload || {};
                 if (data.success) {
                     const metadata = {
                         confidence: data.confidence,
@@ -455,23 +664,51 @@
                         image_paths: data.image_paths,
                         artifact: data.artifact
                     };
-                    
+
                     addMessage('assistant', data.answer, metadata);
                     chatHistory.push({
                         role: 'assistant',
                         content: data.answer,
                         metadata: metadata
                     });
-                    
-                    // Check if response contains artifact to display in canvas
+
                     detectAndOpenCanvas(data.answer, metadata);
                 } else {
-                    addMessage('assistant', data.error || 'An error occurred', {error: true});
+                    addMessage('assistant', data.error || 'An error occurred', { error: true });
                 }
-            } catch (e) {
-                hideTypingIndicator();
-                addMessage('assistant', 'Failed to get response: ' + e.message, {error: true});
             }
+
+            if (event.type === 'error') {
+                markPhaseError(panel, event.payload?.error || 'Stream error');
+            }
+        }
+
+        function updatePhaseDetail(panel, phase, text, append = false) {
+            const detail = panel.querySelector(`[data-phase-detail="${phase}"]`);
+            if (!detail) return;
+            detail.classList.remove('hidden');
+            if (append) {
+                const existing = detail.textContent.trimEnd();
+                if (existing && text) {
+                    detail.textContent = `${existing}\n${text}`;
+                } else {
+                    detail.textContent = `${existing}${text}`;
+                }
+            } else {
+                detail.textContent = text;
+            }
+        }
+
+        function markPhaseError(panel, message) {
+            const phases = ['query_understanding', 'retrieval', 'reasoning', 'verification'];
+            phases.forEach(phase => {
+                const row = panel.querySelector(`[data-phase="${phase}"]`);
+                if (!row) return;
+                const statusEl = row.querySelector('.phase-status');
+                if (statusEl.textContent === 'Running' || statusEl.textContent === 'Pending') {
+                    setPhaseStatus(panel, phase, 'Error');
+                }
+            });
         }
 
         function addMessage(role, content, metadata = null) {
@@ -488,7 +725,7 @@
                         : 'bg-white border border-slate-200 text-slate-700'
             }`;
             
-            let html = `<p class="whitespace-pre-wrap text-sm">${escapeHtml(content)}</p>`;
+            let html = `<p class="text-sm leading-relaxed">${renderMessageContent(content)}</p>`;
             
             if (metadata && role === 'assistant' && !metadata.error) {
                 html += `
@@ -545,6 +782,30 @@
             if (indicator) indicator.remove();
         }
 
+        function renderMessageContent(text) {
+            const images = [];
+            const withPlaceholders = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, src) => {
+                const key = `__IMG_${images.length}__`;
+                images.push({ alt: alt || 'Figure', src });
+                return key;
+            });
+
+            let safe = escapeHtml(withPlaceholders);
+            safe = safe.replace(/\n/g, '<br>');
+
+            images.forEach((img, index) => {
+                const block = `
+                    <div class="mt-3 bg-slate-50 border border-slate-200 rounded-xl p-3">
+                        <img src="${img.src}" alt="${img.alt}" class="w-full rounded-lg" onerror="this.closest('div').style.display='none'">
+                        <div class="text-xs text-slate-500 mt-2">${escapeHtml(img.alt)}</div>
+                    </div>
+                `;
+                safe = safe.replace(`__IMG_${index}__`, block);
+            });
+
+            return safe;
+        }
+
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
@@ -565,7 +826,7 @@
             const fileInput = document.getElementById('file-input');
             const btnText = document.getElementById('upload-btn-text');
             
-            document.getElementById('btn-pdf').className = type === 'pdf' 
+            document.getElementById('btn-doc').className = type === 'document' 
                 ? 'flex-1 py-3 rounded-lg font-medium transition-all bg-blue-600 text-white'
                 : 'flex-1 py-3 rounded-lg font-medium transition-all bg-slate-200 text-slate-600 hover:bg-slate-300';
             document.getElementById('btn-image').className = type === 'image'
@@ -575,9 +836,16 @@
                 ? 'flex-1 py-3 rounded-lg font-medium transition-all bg-blue-600 text-white'
                 : 'flex-1 py-3 rounded-lg font-medium transition-all bg-slate-200 text-slate-600 hover:bg-slate-300';
             
-            if (type === 'pdf') { fileInput.accept = '.pdf'; btnText.textContent = 'Choose PDF'; }
-            else if (type === 'image') { fileInput.accept = '.png,.jpg,.jpeg'; btnText.textContent = 'Choose Image'; }
-            else { fileInput.accept = '.wav,.mp3,.m4a,.ogg'; btnText.textContent = 'Choose Audio'; }
+            if (type === 'document') {
+                fileInput.accept = '.pdf,.docx,.doc,.md,.txt,.rtf';
+                btnText.textContent = 'Choose Document';
+            } else if (type === 'image') {
+                fileInput.accept = '.png,.jpg,.jpeg';
+                btnText.textContent = 'Choose Image';
+            } else {
+                fileInput.accept = '.wav,.mp3,.m4a,.ogg';
+                btnText.textContent = 'Choose Audio';
+            }
         }
 
         async function handleFileUpload(event) {
@@ -592,7 +860,7 @@
             formData.append('file', file);
             
             try {
-                let endpoint = uploadType === 'pdf' ? '/api/upload/pdf' 
+                let endpoint = uploadType === 'document' ? '/api/upload/document' 
                     : uploadType === 'image' ? '/api/upload/image' : '/api/upload/audio';
                 const res = await fetch(endpoint, {method: 'POST', body: formData});
                 const data = await res.json();

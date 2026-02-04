@@ -2,7 +2,7 @@ from agents import QueryUnderstandingAgent, RetrievalAgent, ReasoningAgent, Veri
 from llm_client import LLMClient
 from vector_store import VectorStore
 from cache import get_cache
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Callable
 import time
 import re
 
@@ -191,7 +191,12 @@ class Orchestrator:
             }]
         }
     
-    def run_query(self, user_query: str) -> Dict[str, Any]:
+    def run_query(
+        self,
+        user_query: str,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        use_cache: bool = True
+    ) -> Dict[str, Any]:
         print("\n" + "=" * 70)
         print("ORCHESTRATOR: Starting query processing")
         print("=" * 70 + "\n")
@@ -200,6 +205,10 @@ class Orchestrator:
         original_query = user_query
         original_lang = 'en'
         
+        def emit(event: Dict[str, Any]):
+            if progress_callback:
+                progress_callback(event)
+
         # FIX 4: Translation layer for non-English queries
         if self._is_non_english(user_query):
             print(f" Detected non-English query: {user_query}")
@@ -216,13 +225,36 @@ class Orchestrator:
         print("-" * 70)
         
         if query_type == 'casual':
+            emit({"type": "phase_start", "phase": "query_understanding", "message": "Classifying query"})
+            emit({"type": "phase_text", "phase": "query_understanding", "text": "Detected casual query. No retrieval needed."})
+            emit({"type": "phase_end", "phase": "query_understanding"})
             print("Handling as casual query (no RAG needed)")
             return self._handle_casual_query(user_query)
         
         # Try cache for specialized queries
-        cached_response = self.cache.get(user_query)
+        cached_response = self.cache.get(user_query) if use_cache else None
         if cached_response:
             print(f"💾 CACHE HIT: Returning cached response")
+            emit({"type": "phase_start", "phase": "query_understanding", "message": "Cache hit: quick path"})
+            emit({"type": "phase_text", "phase": "query_understanding", "text": "Using cached analysis."})
+            emit({"type": "phase_end", "phase": "query_understanding"})
+            emit({"type": "phase_start", "phase": "retrieval", "message": "Cache hit: reuse retrieval"})
+            emit({"type": "phase_text", "phase": "retrieval", "text": "Using cached retrieval results."})
+            emit({"type": "phase_end", "phase": "retrieval"})
+            emit({"type": "phase_start", "phase": "reasoning", "message": "Cache hit: reuse reasoning"})
+            cached_answer = cached_response.get('answer', '')
+            for chunk_start in range(0, len(cached_answer), 160):
+                emit({
+                    "type": "phase_text",
+                    "phase": "reasoning",
+                    "text": cached_answer[chunk_start:chunk_start + 160],
+                    "append": True
+                })
+                time.sleep(0.01)
+            emit({"type": "phase_end", "phase": "reasoning"})
+            emit({"type": "phase_start", "phase": "verification", "message": "Cache hit: reuse verification"})
+            emit({"type": "phase_text", "phase": "verification", "text": "Using cached confidence/verification."})
+            emit({"type": "phase_end", "phase": "verification"})
             cached_response['from_cache'] = True
             cached_response['execution_log'] = [{
                 "step": "cache_hit",
@@ -234,10 +266,17 @@ class Orchestrator:
         print("🔍 CACHE MISS: Processing query normally")
         context = {"user_query": user_query, "original_query": original_query, "original_lang": original_lang}
         
+        emit({"type": "phase_start", "phase": "query_understanding", "message": "Analyzing intent and keywords"})
         print("PHASE 1: Query Understanding")
         print("-" * 70)
         query_result = self.query_agent.execute(context)
         self.log_step("query_understanding", query_result)
+        emit({
+            "type": "phase_text",
+            "phase": "query_understanding",
+            "text": f"Intent: {query_result.get('intent', 'n/a')}. Keywords: {', '.join(query_result.get('keywords', [])[:5])}"
+        })
+        emit({"type": "phase_end", "phase": "query_understanding"})
         
         if not query_result['success']:
             return self._build_error_response("Query understanding failed", query_result)
@@ -247,10 +286,17 @@ class Orchestrator:
         print(f"Keywords: {query_result['keywords'][:5]}")
         print()
         
+        emit({"type": "phase_start", "phase": "retrieval", "message": "Searching knowledge base"})
         print("PHASE 2: Knowledge Retrieval")
         print("-" * 70)
         retrieval_result = self.retrieval_agent.execute(context)
         self.log_step("retrieval", retrieval_result)
+        emit({
+            "type": "phase_text",
+            "phase": "retrieval",
+            "text": f"Retrieved {retrieval_result.get('num_results', 0)} chunks using hybrid search." 
+        })
+        emit({"type": "phase_end", "phase": "retrieval"})
         
         if not retrieval_result['success']:
             return self._build_error_response("Retrieval failed", retrieval_result)
@@ -261,6 +307,12 @@ class Orchestrator:
         
         if num_results == 0:
             print("⚠ No relevant documents found in knowledge base")
+            emit({"type": "phase_start", "phase": "reasoning", "message": "No documents to reason over"})
+            emit({"type": "phase_text", "phase": "reasoning", "text": "No relevant documents found."})
+            emit({"type": "phase_end", "phase": "reasoning"})
+            emit({"type": "phase_start", "phase": "verification", "message": "Skipping verification"})
+            emit({"type": "phase_text", "phase": "verification", "text": "No answer to verify."})
+            emit({"type": "phase_end", "phase": "verification"})
             return {
                 "success": True,
                 "query": user_query,
@@ -290,6 +342,7 @@ class Orchestrator:
         while iteration < self.max_refinement_iterations:
             iteration += 1
             
+            emit({"type": "phase_start", "phase": "reasoning", "message": f"Generating answer (iteration {iteration})"})
             print(f"PHASE 3: Reasoning (Iteration {iteration})")
             print("-" * 70)
             
@@ -300,12 +353,22 @@ class Orchestrator:
                 return self._build_error_response("Reasoning failed", reasoning_result)
             
             answer = reasoning_result['answer']
+            for chunk_start in range(0, len(answer), 160):
+                emit({
+                    "type": "phase_text",
+                    "phase": "reasoning",
+                    "text": answer[chunk_start:chunk_start + 160],
+                    "append": True
+                })
+                time.sleep(0.02)
+            emit({"type": "phase_end", "phase": "reasoning"})
             context['answer'] = answer
             
             print(f"Answer generated ({len(answer)} characters)")
             print(f"Preview: {answer[:200]}...")
             print()
             
+            emit({"type": "phase_start", "phase": "verification", "message": f"Verifying answer (iteration {iteration})"})
             print(f"PHASE 4: Verification (Iteration {iteration})")
             print("-" * 70)
             
@@ -319,6 +382,12 @@ class Orchestrator:
             verified = verification_result['verified']
             issues = verification_result.get('issues', [])
             
+            emit({
+                "type": "phase_text",
+                "phase": "verification",
+                "text": f"Confidence: {confidence:.2f}. Verified: {verified}." 
+            })
+            emit({"type": "phase_end", "phase": "verification"})
             print(f"Confidence: {confidence:.2f}")
             print(f"Verified: {verified}")
             if issues:

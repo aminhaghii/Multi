@@ -7,11 +7,14 @@ import numpy as np
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import uvicorn
 import shutil
+import json
+from queue import Queue
+from threading import Thread
 
 from main_engine import Orchestrator
 from llm_client import LLMClient
@@ -230,6 +233,81 @@ async def chat(request: ChatRequest):
             error=str(e)
         )
 
+
+@app.post("/api/chat/stream")
+async def chat_stream(request: ChatRequest):
+    if not request.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    if not llm_client.health_check():
+        raise HTTPException(status_code=503, detail="LLM Server is offline")
+
+    def event_generator():
+        queue: Queue = Queue()
+
+        def progress_callback(event):
+            queue.put({"type": "progress", "payload": event})
+
+        def worker():
+            try:
+                result = orchestrator.run_query(
+                    request.message,
+                    progress_callback=progress_callback,
+                    use_cache=False
+                )
+
+                if result.get('success'):
+                    image_paths = []
+                    raw_image_paths = result.get('image_paths', [])
+                    if raw_image_paths:
+                        image_paths = [
+                            {"path": img.get('path', ''), "source": img.get('source', ''), "page": img.get('page', 0)}
+                            for img in raw_image_paths
+                        ]
+
+                    artifact_data = result.get('artifact')
+                    artifact = None
+                    if artifact_data:
+                        artifact = {
+                            "title": artifact_data.get('title', 'Artifact'),
+                            "type": artifact_data.get('type', 'document'),
+                            "content": artifact_data.get('content', '')
+                        }
+
+                    payload = {
+                        "success": True,
+                        "answer": result.get('answer', ''),
+                        "confidence": result.get('confidence', 0),
+                        "verified": result.get('verified', False),
+                        "iterations": result.get('num_iterations', 0),
+                        "sources": result.get('num_sources', 0),
+                        "logs": result.get('execution_log', []),
+                        "image_paths": image_paths,
+                        "artifact": artifact
+                    }
+                else:
+                    payload = {
+                        "success": False,
+                        "error": result.get('error', 'Unknown error'),
+                        "logs": result.get('execution_log', [])
+                    }
+
+                queue.put({"type": "final", "payload": payload})
+            except Exception as exc:
+                queue.put({"type": "error", "payload": {"error": str(exc)}})
+            finally:
+                queue.put({"type": "done"})
+
+        Thread(target=worker, daemon=True).start()
+
+        while True:
+            event = queue.get()
+            if event["type"] == "done":
+                break
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 @app.post("/api/upload/pdf")
 async def upload_pdf(file: UploadFile = File(...)):
     if not file.filename.endswith('.pdf'):
@@ -251,6 +329,50 @@ async def upload_pdf(file: UploadFile = File(...)):
             "message": f"Processed {result['num_chunks']} chunks from {result['num_pages']} pages",
             "chunks": result['num_chunks'],
             "pages": result['num_pages']
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/upload/document")
+async def upload_document(file: UploadFile = File(...)):
+    allowed_extensions = ['.pdf', '.docx', '.doc', '.md', '.txt', '.rtf']
+    if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
+        raise HTTPException(status_code=400, detail="Unsupported document type")
+
+    os.makedirs("./data", exist_ok=True)
+    file_path = f"./data/{file.filename}"
+
+    with open(file_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+
+    try:
+        ext = os.path.splitext(file.filename)[1].lower()
+        if ext == '.pdf':
+            result = processor.process_pdf(file_path)
+            message = f"Processed {result['num_chunks']} chunks from {result['num_pages']} pages"
+        elif ext in ['.docx', '.doc']:
+            result = processor.process_word(file_path)
+            message = f"Processed {result['num_chunks']} chunks from Word document"
+        elif ext == '.md':
+            result = processor.process_markdown(file_path)
+            message = f"Processed {result['num_chunks']} chunks from Markdown file"
+        elif ext == '.txt':
+            result = processor.process_text(file_path)
+            message = f"Processed {result['num_chunks']} chunks from Text file"
+        elif ext == '.rtf':
+            result = processor.process_rtf(file_path)
+            message = f"Processed {result['num_chunks']} chunks from RTF file"
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported document type")
+
+        cache.invalidate_by_kb()
+        return {
+            "success": True,
+            "message": message,
+            "chunks": result.get('num_chunks', 0),
+            "pages": result.get('num_pages', 0)
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

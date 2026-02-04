@@ -1,738 +1,531 @@
-🔍 گزارش تحلیل کامل پروژه Multi (Agentic Research Assistant)
-📊 ساختار کلی پروژه
-پروژه شما یک RAG-based Multi-Agent Research Assistant است که از معماری این‌طوری استفاده می‌کند:
-
-LLM: Llama-3-8B-Instruct (via llama.cpp server, port 8080)
-
-Vector DB: FAISS + Sentence Transformers (all-MiniLM-L6-v2)
-
-Backend: FastAPI (port 8000)
-
-Agents: Query Understanding → Hybrid Retrieval → Reasoning → Verification
-
-Features: PDF ingestion، image extraction، multilingual (FA→EN)، caching، export
-
-🐛 باگ‌های شناسایی شده (Critical)
-1. Cache Layer غیرفعال است ⚠️
-مکان: main_engine.py خطوط 178-187، 376-379
-
-مشکل: کد caching کامل کامنت شده:
-
+🎯 راهکار: اضافه کردن Task Progress به UI موجود
+قسمت 1: Backend Changes
+1.1 اضافه کردن WebSocket Support (api_server.py)
 python
-# cached_response = self.cache.get(user_query)
-# if cached_response:
-#     ...
-# self.cache.set(user_query, response)
-تأثیر: هر query دوباره از صفر پردازش می‌شود. response time 30-40s برای queries تکراری.
-
-راهکار:
-
-python
-# Uncomment cache logic در خط 178 و 376
-# اما اول باید bug های cache.py رو fix کنی
-2. Conflict در Vector Store ⚠️
-مکان: vector_store.py vs مستندات
-
-مشکل:
-
-کد از FAISS استفاده می‌کنه
-
-مستندات می‌گه ChromaDB
-
-تأثیر: FAISS ساده‌تره اما ChromaDB features بیشتری داره (metadata filtering، updates، etc.)
-
-راهکار: اگه می‌خوای stay با FAISS، مستندات رو update کن. اگه می‌خوای ChromaDB، باید migration کنی.
-
-3. requirements.txt ناقص است 🚨
-مکان: requirements.txt
-
-مشکل: dependencies حیاتی missing هستند:
-
-text
-❌ fastapi
-❌ uvicorn
-❌ pymupdf (fitz import در ingestion.py)
-❌ googletrans یا deep-translator
-❌ httpx (برای async health check)
-❌ pdfplumber (برای table extraction - در FIX.md ذکر شده)
-❌ python-multipart (برای file upload)
-راهکار:
-
-bash
-pip install fastapi uvicorn pymupdf googletrans==4.0.0rc1 httpx pdfplumber python-multipart
-بعدش update کن:
-
-text
-echo "fastapi==0.109.0" >> requirements.txt
-echo "uvicorn==0.27.0" >> requirements.txt
-echo "pymupdf==1.23.8" >> requirements.txt
-echo "googletrans==4.0.0rc1" >> requirements.txt
-echo "httpx==0.26.0" >> requirements.txt
-echo "pdfplumber==0.10.3" >> requirements.txt
-echo "python-multipart==0.0.6" >> requirements.txt
-4. Translation Fallback ضعیف ⚠️
-مکان: main_engine.py خطوط 102-132
-
-مشکل: اگه googletrans fail بشه، query اصلی return می‌شه بدون translation:
-
-python
-except Exception as e:
-    print(f"Translation API error: {e}")
-return query, original_lang  # ← اگه فارسی بود، untranslated می‌مونه
-تأثیر: queries فارسی fail می‌شن چون LLM انگلیسی‌ست.
-
-راهکار:
-
-python
-# Add fallback به deep-translator یا hardcoded dictionary برای technical terms
-from deep_translator import GoogleTranslator
-
-if TRANSLATION_AVAILABLE and TRANSLATOR:
-    try:
-        result = TRANSLATOR.translate(query, dest='en')
-        ...
-    except:
-        # Fallback 2: deep-translator
-        try:
-            result = GoogleTranslator(source='fa', target='en').translate(query)
-            return result, original_lang
-        except:
-            # Fallback 3: Manual mapping of common terms
-            return self._manual_translate(query), original_lang
-5. LLM Client بدون Timeout/Retry 🚨
-مکان: llm_client.py خطوط 90-110
-
-مشکل: requests.post timeout=60 داره اما:
-
-اگه LLM hang بشه، 60s wait می‌کنه
-
-اگه connection error بشه، retry نمی‌کنه
-
-اگه response خالی بیاد، validate نمی‌کنه
-
-تأثیر: 25% reasoning failures (طبق FIX.md)
-
-راهکار (طبق FIX.md):
-
-python
-def generate(self, prompt: str, max_tokens=400, max_retries=3):
-    for attempt in range(max_retries):
-        try:
-            response = requests.post(
-                f"{self.base_url}/completion",
-                json={...},
-                timeout=30  # کاهش از 60 به 30
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                text = result.get("content", "").strip()
-                
-                # Validate response
-                if not text or len(text) < 20:
-                    raise ValueError("Empty or too short response")
-                
-                return {"success": True, "text": text}
-            
-        except (requests.Timeout, requests.ConnectionError) as e:
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # Exponential backoff
-                continue
-            return {"success": False, "error": f"Max retries exceeded: {e}"}
-        
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-6. ReasoningAgent Fallback ناقص ⚠️
-مکان: agents/specific_agents.py خطوط 174-280
-
-مشکل: fallback mechanism هست اما:
-
-_simplified_reasoning context رو truncate می‌کنه به 2000 chars اما token count check نمی‌کنه
-
-_direct_extraction sentence matching ساده‌س، technical queries رو handle نمی‌کنه
-
-Log file در logs/reasoning_failures.log save می‌شه اما این directory ممکن است exist نکنه
-
-راهکار:
-
-python
-# Add در __init__:
-os.makedirs('logs', exist_ok=True)
-
-# Add token estimation:
-def _estimate_tokens(self, text: str) -> int:
-    return int(len(text.split()) * 1.3)  # Rough estimation
-
-def _simplified_reasoning(self, query: str, context_text: str):
-    max_tokens = 2048 - 200 - 100 - 500  # system + query + response
-    while self._estimate_tokens(context_text) > max_tokens:
-        context_text = context_text[:int(len(context_text) * 0.8)]
-    
-    # Rest of code...
-7. Image Captioner Import Error Silent Fail ⚠️
-مکان: api_server.py خطوط 82-87
-
-مشکل: اگه BLIP model load نشه، image captioning disable می‌شه اما:
-
-User متوجه نمی‌شه
-
-Images بدون caption index می‌شن → retrieval ضعیف
-
-راهکار:
-
-python
-# Add health status endpoint
-@app.get("/api/health/detailed")
-async def detailed_health():
-    return {
-        "llm_status": llm_client.health_check(),
-        "multimodal_status": llm_client.multimodal_health_check(),
-        "image_captioner": image_captioner is not None,  # ← Add this
-        "vector_db_count": vector_store.get_collection_count()
-    }
-و در frontend نشون بده که image captioning off است.
-
-8. Session Endpoints Without SESSION_SUPPORT ⚠️
-مکان: api_server.py خطوط 399-446
-
-مشکل: session endpoints همیشه exist هستند اما:
-
-python
-if not SESSION_SUPPORT:
-    return {"id": f"temp_{id(title)}", ...}  # Temp fallback
-تأثیر: Frontend فکر می‌کنه session کار می‌کنه اما data persist نمی‌شه.
-
-راهکار: یا session support رو fully implement کن یا endpoints رو conditional register کن:
-
-python
-if SESSION_SUPPORT:
-    @app.post("/api/sessions")
-    async def create_session(...):
-        ...
-9. HybridRetrievalAgent Crash با Empty DB 🚨
-مکان: agents/hybrid_retrieval.py خطوط 176-179
-
-مشکل:
-
-python
-all_docs = getattr(self.vs, 'documents', [])
-all_metas = getattr(self.vs, 'metadatas', [])
-اگه vector store empty باشه و documents attribute نداشته باشه، getattr empty list return می‌کنه. اما اگه vector_store.search() call بشه قبلش و exception بده، handle نمی‌شه.
-
-راهکار:
-
-python
-def _keyword_search(self, query: str, k: int) -> List[SearchResult]:
-    results = []
-    
-    try:
-        all_docs = getattr(self.vs, 'documents', [])
-        all_metas = getattr(self.vs, 'metadatas', [])
-        
-        if not all_docs:
-            logger.warning("Vector store is empty")
-            return results
-        
-        # Rest of code...
-    
-    except Exception as e:
-        logger.error(f"Keyword search failed: {e}")
-        return results
-📉 نقاط ضعف کیفیت (Quality Issues)
-1. Chunk Size کوچک ⚠️
-مکان: ingestion.py خط 25، api_server.py خط 84
-
-python
-processor = DocumentProcessor(vector_store, chunk_size=500, chunk_overlap=50)
-مشکل:
-
-500 words برای technical documents کمه
-
-Context window 2048 tokens → می‌تونیم chunks بزرگ‌تر داشته باشیم
-
-Overlap 50 خیلی کمه (10%)
-
-پیشنهاد:
-
-python
-chunk_size=800  # 20% افزایش
-chunk_overlap=160  # 20% overlap
-2. Top-K کم در Retrieval ⚠️
-مکان: main_engine.py خط 250، agents/specific_agents.py خط 117
-
-python
-k = context.get("top_k", 10)  # Default 10
-مشکل: برای queries پیچیده که نیاز به context زیاد دارن، 10 chunks کمه.
-
-پیشنهاد:
-
-python
-# Dynamic top-k based on query complexity
-query_words = len(query.split())
-k = 15 if query_words > 10 else 10
-3. Verification Agent ضعیف ⚠️
-مکان: agents/specific_agents.py خطوط 641-707
-
-مشکل: verification فقط از LLM استفاده می‌کنه، هیچ heuristic یا fact-checking ندارد:
-
-python
-# Just asks LLM "is this correct?"
-confidence = float(conf_str)  # Could be anything
-پیشنهاد: Add heuristics:
-
-python
-def _calculate_confidence(self, answer, context, llm_confidence):
-    # Heuristic 1: Answer length
-    if len(answer) < 50:
-        llm_confidence *= 0.8
-    
-    # Heuristic 2: Source overlap
-    answer_words = set(answer.lower().split())
-    context_words = set(' '.join(context).lower().split())
-    overlap = len(answer_words & context_words) / len(answer_words)
-    overlap_score = min(overlap, 1.0)
-    
-    # Heuristic 3: Citation presence
-    has_citations = "source:" in answer.lower() or "page" in answer.lower()
-    citation_bonus = 1.1 if has_citations else 1.0
-    
-    # Combine
-    final_confidence = llm_confidence * overlap_score * citation_bonus
-    return min(final_confidence, 1.0)
-4. No Reranking ⚠️
-مکان: agents/hybrid_retrieval.py خطوط 232-282
-
-مشکل: بعد از merge، فقط sort by weighted score می‌شه. هیچ cross-encoder reranking نیست.
-
-پیشنهاد: Add reranking stage:
-
-python
-from sentence_transformers import CrossEncoder
-
-class HybridRetrievalAgent:
-    def __init__(self, vector_store, config=None):
-        self.reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
-    
-    def _rerank(self, query: str, results: List[SearchResult], top_k: int):
-        # Score each result
-        pairs = [(query, r.document) for r in results]
-        scores = self.reranker.predict(pairs)
-        
-        # Combine with original scores
-        for result, score in zip(results, scores):
-            result.score = (result.score + score) / 2
-        
-        # Re-sort
-        results.sort(key=lambda x: x.score, reverse=True)
-        return results[:top_k]
-نکته: این یک dependency جدید می‌خواهد:
-
-bash
-pip install sentence-transformers
-5. Image Retrieval فقط Caption-Based ⚠️
-مکان: ingestion.py خطوط 265-297
-
-مشکل: images فقط based on text caption search می‌شن. اگه caption ضعیف باشه، image پیدا نمی‌شه.
-
-پیشنهاد: Add visual similarity search با CLIP:
-
-python
-from sentence_transformers import util
-import torch
-from PIL import Image
-
-class VisualSearchEngine:
-    def __init__(self):
-        from transformers import CLIPProcessor, CLIPModel
-        self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-        self.image_embeddings = {}
-    
-    def index_image(self, image_path: str):
-        image = Image.open(image_path)
-        inputs = self.processor(images=image, return_tensors="pt")
-        with torch.no_grad():
-            embedding = self.model.get_image_features(**inputs)
-        self.image_embeddings[image_path] = embedding
-    
-    def search_by_text(self, query: str, top_k=5):
-        inputs = self.processor(text=[query], return_tensors="pt")
-        with torch.no_grad():
-            text_embedding = self.model.get_text_features(**inputs)
-        
-        scores = {}
-        for path, img_emb in self.image_embeddings.items():
-            similarity = util.cos_sim(text_embedding, img_emb).item()
-            scores[path] = similarity
-        
-        return sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
-6. No Query Expansion ⚠️
-مکان: main_engine.py - orchestrator flow
-
-مشکل: اگه query ambiguous باشه یا synonyms داشته باشه، retrieval weak می‌شه.
-
-پیشنهاد: Add query expansion:
-
-python
-def _expand_query(self, query: str) -> List[str]:
-    """Generate alternative query formulations."""
-    expansions = [query]
-    
-    # Add synonyms
-    synonyms = {
-        'worst case': ['pessimistic scenario', 'maximum deviation'],
-        'sensitivity': ['parametric variation', 'robustness'],
-        # Add more domain-specific synonyms
-    }
-    
-    query_lower = query.lower()
-    for term, alternatives in synonyms.items():
-        if term in query_lower:
-            for alt in alternatives:
-                expansions.append(query_lower.replace(term, alt))
-    
-    # Add question reformulation
-    if query.startswith('what is'):
-        expansions.append(query.replace('what is', 'define'))
-    
-    return expansions[:3]  # Max 3 variants
-
-# Use in retrieval:
-expanded_queries = self._expand_query(user_query)
-all_results = []
-for q in expanded_queries:
-    results = self.retrieval_agent.execute({"user_query": q, "top_k": 5})
-    all_results.extend(results['documents'])
-
-# Deduplicate and merge
-...
-7. Citation System ساده ⚠️
-مکان: agents/specific_agents.py خطوط 554-569
-
-مشکل: citations فقط در footer append می‌شن:
-
-python
-answer += "\n\n**Sources:**\n" + "\n".join(citation_list)
-بهتر بود inline citations داشته باشیم مثل: "AOCS stands for Attitude and Orbit Control System."
-​
-
-پیشنهاد:
-
-python
-def _add_inline_citations(self, answer: str, metadatas: List[Dict]) -> str:
-    """Add inline citations to answer."""
-    # Build citation map
-    citations = {}
-    for i, meta in enumerate(metadatas[:5], 1):
-        filename = meta.get('filename', 'unknown')
-        page = meta.get('page', 0) + 1
-        citations[i] = f"{filename} (Page {page})"
-    
-    # Find sentences that need citation
-    sentences = answer.split('. ')
-    cited_answer = []
-    
-    for sentence in sentences:
-        # Heuristic: if sentence has technical info, add citation
-        if any(keyword in sentence.lower() for keyword in ['is defined', 'consists of', 'includes', 'section']):
-            # Find most relevant source
-            best_cite = 1  # Simple: use first source
-            cited_answer.append(f"{sentence} [{best_cite}]")
-        else:
-            cited_answer.append(sentence)
-    
-    result = '. '.join(cited_answer)
-    
-    # Add footer
-    result += "\n\n**References:**\n"
-    for i, cite in citations.items():
-        result += f"[{i}] {cite}\n"
-    
-    return result
-⚡ بهبودهای پرفورمنس
-1. Parallel Agent Execution 🚀
-مکان: main_engine.py - sequential execution
-
-مشکل: همه agents به صورت serial run می‌شن → response time 30-40s
-
-پیشنهاد (طبق FIX.md):
-
-python
+# در ابتدای api_server.py بعد از imports:
+from fastapi import WebSocket, WebSocketDisconnect
 import asyncio
 
-async def run_query_async(self, user_query: str):
-    loop = asyncio.get_event_loop()
+# WebSocket Manager
+class TaskProgressManager:
+    def __init__(self):
+        self.connections: Dict[str, WebSocket] = {}
     
-    # Stage 1: Query understanding (fast)
-    query_result = await loop.run_in_executor(None, self.query_agent.execute, ...)
+    async def connect(self, session_id: str, websocket: WebSocket):
+        await websocket.accept()
+        self.connections[session_id] = websocket
+        print(f"✅ Task tracking connected: {session_id}")
     
-    # Stage 2: Retrieval (parallel with other prep)
-    retrieval_task = loop.run_in_executor(None, self.retrieval_agent.execute, ...)
-    # Do other work here...
-    retrieval_result = await retrieval_task
+    def disconnect(self, session_id: str):
+        if session_id in self.connections:
+            del self.connections[session_id]
     
-    # Stage 3: Reasoning
-    reasoning_task = loop.run_in_executor(None, self.reasoning_agent.execute, ...)
-    answer_result = await reasoning_task
-    
-    # Stage 4: Verification + Artifact (parallel)
-    verify_task = loop.run_in_executor(None, self.verification_agent.execute, ...)
-    artifact_task = loop.run_in_executor(None, self._detect_artifact_need, ...)
-    
-    verify, artifact = await asyncio.gather(verify_task, artifact_task)
-    
-    return {...}
-Expected speedup: 30-40% reduction (30s → 20s)
+    async def send_update(self, session_id: str, update: dict):
+        if session_id in self.connections:
+            try:
+                await self.connections[session_id].send_json(update)
+            except:
+                self.disconnect(session_id)
 
-2. Enable Caching 🚀
-مکان: main_engine.py uncomment خطوط 178-187، 376-379
+progress_manager = TaskProgressManager()
 
-مشکل: cache layer وجود داره اما disabled است.
-
-راهکار: Uncomment + fix bugs:
-
+# اضافه کردن WebSocket endpoint
+@app.websocket("/ws/progress/{session_id}")
+async def progress_websocket(websocket: WebSocket, session_id: str):
+    await progress_manager.connect(session_id, websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # Keep alive
+    except WebSocketDisconnect:
+        progress_manager.disconnect(session_id)
+1.2 Update main_engine.py Orchestrator
 python
-# In run_query():
-cached_response = self.cache.get(user_query)
-if cached_response:
-    print(f"✅ CACHE HIT: Returning cached response")
-    cached_response['from_cache'] = True
-    return cached_response
+# در main_engine.py داخل کلاس Orchestrator:
 
-# ... normal processing ...
+async def emit_progress(self, phase: str, subtask: str, status: str, details: dict = None):
+    """Emit progress update via WebSocket"""
+    from api_server import progress_manager
+    
+    update = {
+        "phase": phase,
+        "subtask": subtask,
+        "status": status,  # 'running', 'completed', 'failed'
+        "timestamp": datetime.now().isoformat(),
+        "details": details or {}
+    }
+    
+    if hasattr(self, 'session_id') and self.session_id:
+        await progress_manager.send_update(self.session_id, update)
+    
+    return update
 
-# Cache successful responses
-if response['success'] and response['confidence'] >= 0.7:
-    self.cache.set(user_query, response)
-    print(f"💾 CACHE: Response cached")
-Expected speedup: Cached queries < 1s (vs 30s)
-
-3. Streaming Response 🚀
-مکان: api_server.py - add new endpoint
-
-پیشنهاد (طبق FIX.md):
-
-python
-from fastapi.responses import StreamingResponse
-import json
-
-@app.post("/api/chat/stream")
-async def chat_stream(request: ChatRequest):
-    async def generate():
-        # Send status updates as query processes
-        yield json.dumps({"type": "status", "stage": "understanding"}) + "\n"
+async def run_with_progress(self, user_query: str, session_id: str):
+    """Modified run_query with progress tracking"""
+    self.session_id = session_id
+    
+    try:
+        # PHASE 1: Understanding
+        await self.emit_progress("understanding", "Analyzing query", "running")
         
-        # ... process query ...
+        # Translation check
+        if self._is_non_english(user_query):
+            await self.emit_progress("understanding", "Translating query", "running")
+            user_query, lang = self._translate_query(user_query)
+            await self.emit_progress("understanding", "Translation complete", "completed", {"lang": lang})
         
-        yield json.dumps({"type": "status", "stage": "retrieval", "chunks": 10}) + "\n"
+        # Query understanding
+        context = {"user_query": user_query}
+        query_result = self.query_agent.execute(context)
+        await self.emit_progress("understanding", "Query analyzed", "completed", {
+            "intent": query_result.get('intent', 'research'),
+            "keywords": query_result.get('keywords', [])[:3]
+        })
+        context.update(query_result)
         
-        # ... reasoning ...
+        # PHASE 2: Planning
+        await self.emit_progress("planning", "Planning retrieval", "running")
+        k = 15 if len(user_query.split()) > 10 else 10
+        await self.emit_progress("planning", "Strategy determined", "completed", {"chunks": k})
         
-        yield json.dumps({"type": "status", "stage": "reasoning"}) + "\n"
+        # PHASE 3: Execution - Retrieval
+        await self.emit_progress("execution", "Searching documents", "running")
+        retrieval_result = self.retrieval_agent.execute(context)
+        num_results = retrieval_result.get('num_results', 0)
         
-        # Stream answer word by word
-        words = answer.split()
-        for i in range(0, len(words), 5):
-            chunk = ' '.join(words[i:i+5])
-            yield json.dumps({"type": "content", "data": chunk}) + "\n"
-            await asyncio.sleep(0.05)
+        if num_results == 0:
+            await self.emit_progress("execution", "No documents found", "failed")
+            return {"success": False, "error": "No documents found"}
         
-        yield json.dumps({"type": "complete", "metadata": {...}}) + "\n"
-    
-    return StreamingResponse(generate(), media_type="application/x-ndjson")
-Frontend باید EventSource یا fetch with streaming handle کنه.
-
-Expected improvement: Perceived latency کاهش (user content رو زودتر می‌بینه)
-
-🎯 بهبودهای کیفیت پاسخ
-1. Add Context Window Management 📊
-python
-def _manage_context_window(self, chunks: List[str], max_tokens=1500):
-    """Intelligently select chunks within token budget."""
-    from transformers import AutoTokenizer
-    tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
-    
-    selected = []
-    total_tokens = 0
-    
-    for chunk in chunks:
-        tokens = len(tokenizer.encode(chunk))
-        if total_tokens + tokens > max_tokens:
-            break
-        selected.append(chunk)
-        total_tokens += tokens
-    
-    return selected, total_tokens
-2. Add Confidence Calibration 📊
-python
-def _calibrate_confidence(self, raw_confidence: float, metadata: Dict) -> float:
-    """Adjust confidence based on metadata."""
-    calibrated = raw_confidence
-    
-    # Reduce confidence if:
-    # - Low retrieval scores
-    if metadata.get('best_distance', 0) > 0.8:
-        calibrated *= 0.9
-    
-    # - Few sources
-    if metadata.get('num_sources', 0) < 3:
-        calibrated *= 0.95
-    
-    # - Short answer
-    if len(metadata.get('answer', '')) < 100:
-        calibrated *= 0.9
-    
-    # Increase confidence if:
-    # - Multiple agents agree
-    if metadata.get('verification_passed', False):
-        calibrated *= 1.05
-    
-    return min(calibrated, 1.0)
-3. Add Answer Post-Processing 📊
-python
-def _postprocess_answer(self, answer: str) -> str:
-    """Clean and enhance answer."""
-    # Remove repetition
-    sentences = answer.split('. ')
-    seen = set()
-    unique = []
-    for s in sentences:
-        if s.strip() and s.strip() not in seen:
-            seen.add(s.strip())
-            unique.append(s)
-    answer = '. '.join(unique)
-    
-    # Fix formatting
-    answer = re.sub(r'\n{3,}', '\n\n', answer)  # Max 2 newlines
-    answer = re.sub(r' +', ' ', answer)  # Remove extra spaces
-    
-    # Add structure
-    if len(answer) > 500 and '##' not in answer:
-        # Add section headers if missing
-        paragraphs = answer.split('\n\n')
-        if len(paragraphs) > 2:
-            structured = f"## Overview\n\n{paragraphs[0]}\n\n## Details\n\n"
-            structured += '\n\n'.join(paragraphs[1:])
-            answer = structured
-    
-    return answer
-🏗️ پیشنهادات معماری
-1. Add Health Monitoring Dashboard
-python
-# utils/health_monitor.py
-class HealthMonitor:
-    def get_system_metrics(self):
+        await self.emit_progress("execution", f"Found {num_results} chunks", "completed")
+        context.update(retrieval_result)
+        
+        # PHASE 3: Execution - Reasoning
+        await self.emit_progress("execution", "Generating answer", "running", {"model": "Llama-3-8B"})
+        reasoning_result = self.reasoning_agent.execute(context)
+        answer = reasoning_result.get('answer', '')
+        await self.emit_progress("execution", "Answer generated", "completed", {
+            "length": len(answer),
+            "multimodal": reasoning_result.get('used_multimodal', False)
+        })
+        context['answer'] = answer
+        
+        # PHASE 4: Verification
+        await self.emit_progress("verification", "Verifying accuracy", "running")
+        verification_result = self.verification_agent.execute(context)
+        confidence = verification_result.get('confidence', 0.7)
+        await self.emit_progress("verification", "Verification complete", "completed", {
+            "confidence": f"{confidence:.0%}"
+        })
+        
+        # Complete
+        await self.emit_progress("complete", "Task finished", "completed")
+        
         return {
-            "llm_latency_ms": self.measure_llm_latency(),
-            "vector_db_size": self.vs.get_collection_count(),
-            "cache_hit_rate": self.cache.get_stats()['reuse_rate'],
-            "avg_response_time": self.avg_response_time,
-            "error_rate_24h": self.error_rate
+            "success": True,
+            "answer": answer,
+            "confidence": confidence,
+            "num_sources": num_results
         }
-در frontend نشون بده:
+        
+    except Exception as e:
+        await self.emit_progress("error", str(e), "failed")
+        return {"success": False, "error": str(e)}
+1.3 Update API Chat Endpoint (api_server.py)
+python
+@app.post("/api/chat")
+async def chat(request: ChatRequest):
+    """Chat endpoint with progress tracking"""
+    if not request.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+    
+    # Generate session ID if not provided
+    session_id = request.session_id or str(uuid.uuid4())
+    
+    try:
+        # Run with progress tracking
+        result = await orchestrator.run_with_progress(request.message, session_id)
+        
+        if result['success']:
+            return ChatResponse(
+                success=True,
+                answer=result['answer'],
+                confidence=result.get('confidence', 0.7),
+                verified=result.get('confidence', 0.7) >= 0.7,
+                sources=result.get('num_sources', 0),
+                session_id=session_id
+            )
+        else:
+            return ChatResponse(
+                success=False,
+                error=result.get('error', 'Unknown error'),
+                session_id=session_id
+            )
+    except Exception as e:
+        return ChatResponse(success=False, error=str(e))
+قسمت 2: Frontend Changes (static/index.html)
+2.1 اضافه کردن Task Progress Panel به HTML
+در قسمت <main> بعد از <div id="messages"> اضافه کن:
 
 xml
-<div class="health-dashboard">
-  LLM: 🟢 125ms | DB: 1,234 docs | Cache: 45% hit rate
+<!-- Task Progress Tracker (appears above input) -->
+<div id="taskProgress" class="hidden bg-white border-t border-slate-200 px-4 py-3">
+    <div class="max-w-4xl mx-auto">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-slate-600 uppercase tracking-wide">Processing</span>
+            <button onclick="toggleTaskProgress()" class="text-slate-400 hover:text-slate-600">
+                <i class="fas fa-chevron-down text-xs"></i>
+            </button>
+        </div>
+        
+        <!-- Phase Pills -->
+        <div class="flex gap-2 mb-3">
+            <div id="phase-understanding" class="phase-pill">
+                <i class="fas fa-brain text-xs mr-1"></i>
+                <span>Understanding</span>
+            </div>
+            <div id="phase-planning" class="phase-pill">
+                <i class="fas fa-list-check text-xs mr-1"></i>
+                <span>Planning</span>
+            </div>
+            <div id="phase-execution" class="phase-pill">
+                <i class="fas fa-gear text-xs mr-1"></i>
+                <span>Execution</span>
+            </div>
+            <div id="phase-verification" class="phase-pill">
+                <i class="fas fa-check-circle text-xs mr-1"></i>
+                <span>Verification</span>
+            </div>
+        </div>
+        
+        <!-- Subtask List -->
+        <div id="subtaskList" class="space-y-1 max-h-32 overflow-y-auto scrollbar-thin">
+            <!-- Subtasks appear here -->
+        </div>
+        
+        <!-- Progress Bar -->
+        <div class="mt-2">
+            <div class="w-full bg-slate-200 rounded-full h-1">
+                <div id="overallProgress" class="bg-blue-600 h-1 rounded-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+        </div>
+    </div>
 </div>
-2. Add Evaluation Suite
-python
-# tests/eval_suite.py
-test_queries = [
-    {"query": "What is AOCS?", "expected_keywords": ["attitude", "orbit", "control"]},
-    {"query": "فاز آرامش چیست؟", "expected_keywords": ["tranquilization", "phase"]},
-    {"query": "Show me figures about AOCS", "expected_type": "image_retrieval"},
-    # Add 20-30 test queries
-]
+2.2 اضافه کردن CSS Styles
+در قسمت <style> اضافه کن:
 
-def run_evaluation():
-    results = []
-    for test in test_queries:
-        response = orchestrator.run_query(test['query'])
-        
-        # Check if expected keywords present
-        score = sum(1 for kw in test['expected_keywords'] 
-                   if kw.lower() in response['answer'].lower())
-        
-        results.append({
-            "query": test['query'],
-            "score": score / len(test['expected_keywords']),
-            "confidence": response['confidence'],
-            "time_seconds": response['execution_time']
-        })
+css
+/* Task Progress Styles */
+.phase-pill {
+    display: flex;
+    align-items: center;
+    padding: 4px 12px;
+    border-radius: 9999px;
+    background: #f1f5f9;
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 500;
+    transition: all 0.3s;
+}
+
+.phase-pill.active {
+    background: #3b82f6;
+    color: white;
+}
+
+.phase-pill.completed {
+    background: #10b981;
+    color: white;
+}
+
+.phase-pill.failed {
+    background: #ef4444;
+    color: white;
+}
+
+.subtask-item {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    background: #f8fafc;
+    border-radius: 6px;
+    font-size: 12px;
+    animation: slideIn 0.3s ease-out;
+}
+
+.subtask-item .status-icon {
+    width: 16px;
+    height: 16px;
+    margin-right: 8px;
+    flex-shrink: 0;
+}
+
+.subtask-item.running .status-icon {
+    color: #3b82f6;
+    animation: spin 1s linear infinite;
+}
+
+.subtask-item.completed .status-icon {
+    color: #10b981;
+}
+
+.subtask-item.failed .status-icon {
+    color: #ef4444;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+2.3 اضافه کردن JavaScript Functions
+در قسمت <script> اضافه کن:
+
+javascript
+// Task Progress Tracking
+let taskProgressWS = null;
+let currentSessionForProgress = null;
+
+function initTaskProgressWebSocket(sessionId) {
+    if (taskProgressWS) {
+        taskProgressWS.close();
+    }
     
-    # Report
-    avg_score = sum(r['score'] for r in results) / len(results)
-    print(f"Evaluation Score: {avg_score:.2%}")
-    return results
-3. Add Logging & Observability
-python
-# utils/logger.py
-import logging
-from datetime import datetime
-
-class StructuredLogger:
-    def __init__(self):
-        logging.basicConfig(
-            filename=f'logs/app_{datetime.now().strftime("%Y%m%d")}.log',
-            level=logging.INFO,
-            format='%(asctime)s | %(name)s | %(levelname)s | %(message)s'
-        )
-        self.logger = logging.getLogger("RAG_System")
+    currentSessionForProgress = sessionId;
+    const wsUrl = `ws://${window.location.host}/ws/progress/${sessionId}`;
     
-    def log_query(self, query, result):
-        self.logger.info(json.dumps({
-            "event": "query_processed",
-            "query": query[:100],
-            "success": result['success'],
-            "confidence": result.get('confidence'),
-            "latency_ms": result.get('latency_ms'),
-            "sources_used": result.get('num_sources'),
-            "from_cache": result.get('from_cache', False)
-        }))
-📝 خلاصه اقدامات پیشنهادی
-🔴 Priority 1 (Critical - امروز):
-Fix requirements.txt → Add missing deps
+    taskProgressWS = new WebSocket(wsUrl);
+    
+    taskProgressWS.onopen = () => {
+        console.log('✅ Task progress WebSocket connected');
+        showTaskProgress();
+    };
+    
+    taskProgressWS.onmessage = (event) => {
+        const update = JSON.parse(event.data);
+        handleTaskUpdate(update);
+    };
+    
+    taskProgressWS.onerror = (error) => {
+        console.error('❌ WebSocket error:', error);
+    };
+    
+    taskProgressWS.onclose = () => {
+        console.log('WebSocket closed');
+        setTimeout(() => hideTaskProgress(), 2000);
+    };
+}
 
-Uncomment caching → Enable cache layer
+function showTaskProgress() {
+    const panel = document.getElementById('taskProgress');
+    panel.classList.remove('hidden');
+    
+    // Reset state
+    document.querySelectorAll('.phase-pill').forEach(p => {
+        p.classList.remove('active', 'completed', 'failed');
+    });
+    document.getElementById('subtaskList').innerHTML = '';
+    document.getElementById('overallProgress').style.width = '0%';
+}
 
-Fix LLM timeout → Add retry + validation
+function hideTaskProgress() {
+    const panel = document.getElementById('taskProgress');
+    panel.classList.add('hidden');
+}
 
-Fix translation fallback → Add deep-translator
+function toggleTaskProgress() {
+    const list = document.getElementById('subtaskList');
+    const btn = event.currentTarget.querySelector('i');
+    
+    if (list.style.maxHeight === '0px') {
+        list.style.maxHeight = '128px';
+        btn.classList.remove('fa-chevron-down');
+        btn.classList.add('fa-chevron-up');
+    } else {
+        list.style.maxHeight = '0px';
+        btn.classList.remove('fa-chevron-up');
+        btn.classList.add('fa-chevron-down');
+    }
+}
 
-🟠 Priority 2 (High - این هفته):
-Increase chunk size → 500→800 + overlap 50→160
+function handleTaskUpdate(update) {
+    const { phase, subtask, status, details } = update;
+    
+    console.log('📊 Task Update:', phase, subtask, status);
+    
+    // Update phase pill
+    updatePhasePill(phase, status);
+    
+    // Add subtask to list
+    addSubtask(subtask, status, details);
+    
+    // Update progress bar
+    updateProgressBar(phase, status);
+}
 
-Add reranking → CrossEncoder after retrieval
+function updatePhasePill(phase, status) {
+    const pillId = `phase-${phase}`;
+    const pill = document.getElementById(pillId);
+    
+    if (!pill) return;
+    
+    // Remove old status
+    pill.classList.remove('active', 'completed', 'failed');
+    
+    // Add new status
+    if (status === 'running') {
+        pill.classList.add('active');
+    } else if (status === 'completed') {
+        pill.classList.add('completed');
+    } else if (status === 'failed') {
+        pill.classList.add('failed');
+    }
+}
 
-Improve verification → Add heuristics
+function addSubtask(subtask, status, details) {
+    const list = document.getElementById('subtaskList');
+    
+    // Create subtask item
+    const item = document.createElement('div');
+    item.className = `subtask-item ${status}`;
+    
+    let icon = '';
+    if (status === 'running') {
+        icon = '<i class="fas fa-spinner status-icon"></i>';
+    } else if (status === 'completed') {
+        icon = '<i class="fas fa-check-circle status-icon"></i>';
+    } else if (status === 'failed') {
+        icon = '<i class="fas fa-exclamation-circle status-icon"></i>';
+    }
+    
+    let detailText = '';
+    if (details) {
+        if (details.keywords) {
+            detailText = ` (${details.keywords.join(', ')})`;
+        } else if (details.chunks) {
+            detailText = ` (${details.chunks} chunks)`;
+        } else if (details.confidence) {
+            detailText = ` (${details.confidence})`;
+        }
+    }
+    
+    item.innerHTML = `
+        ${icon}
+        <span class="flex-1 text-slate-700">${subtask}${detailText}</span>
+    `;
+    
+    list.appendChild(item);
+    list.scrollTop = list.scrollHeight;
+}
 
-Add health monitoring → Dashboard endpoint
+function updateProgressBar(phase, status) {
+    if (status !== 'completed') return;
+    
+    const phaseProgress = {
+        'understanding': 25,
+        'planning': 50,
+        'execution': 75,
+        'verification': 90,
+        'complete': 100
+    };
+    
+    const progress = phaseProgress[phase] || 0;
+    document.getElementById('overallProgress').style.width = `${progress}%`;
+}
 
-🟡 Priority 3 (Medium - هفته بعد):
-Add query expansion → Synonyms + reformulation
+// Modify sendMessage() to init WebSocket
+async function sendMessage() {
+    const input = document.getElementById('message-input');
+    const message = input.value.trim();
+    if (!message) return;
 
-Implement streaming → Better UX
+    input.value = '';
+    
+    const emptyState = document.getElementById('empty-state');
+    if (emptyState) emptyState.remove();
 
-Add inline citations → در متن پاسخ
-​
+    addMessage('user', message);
+    chatHistory.push({role: 'user', content: message});
 
-Parallel execution → Async orchestrator
+    // Initialize progress tracking
+    const sessionId = currentSessionId || 'temp_' + Date.now();
+    initTaskProgressWebSocket(sessionId);
 
-🟢 Priority 4 (Nice to have):
-CLIP visual search → Image similarity
+    showTypingIndicator();
 
-Evaluation suite → Automated testing
+    try {
+        const res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                message: message,
+                session_id: sessionId
+            })
+        });
+        
+        const data = await res.json();
+        hideTypingIndicator();
 
-Structured logging → Observability
+        if (data.success) {
+            const metadata = {
+                confidence: data.confidence,
+                verified: data.verified,
+                sources: data.sources,
+                artifact: data.artifact
+            };
+            
+            addMessage('assistant', data.answer, metadata);
+            chatHistory.push({
+                role: 'assistant',
+                content: data.answer,
+                metadata: metadata
+            });
+            
+            detectAndOpenCanvas(data.answer, metadata);
+        } else {
+            addMessage('assistant', data.error || 'An error occurred', {error: true});
+        }
+    } catch (e) {
+        hideTypingIndicator();
+        addMessage('assistant', 'Failed to get response: ' + e.message, {error: true});
+    } finally {
+        // Close WebSocket after response
+        if (taskProgressWS) {
+            setTimeout(() => {
+                taskProgressWS.close();
+                hideTaskProgress();
+            }, 3000);
+        }
+    }
+}
+🎯 نتیجه نهایی
+با این تغییرات، وقتی کاربر query می‌فرسته:
 
-Table extraction → pdfplumber (اگه NFPA document داری)
+زیر chat messages یک progress panel ظاهر می‌شه
 
-🎯 انتظارات بعد از Fix:
-✅ Response time: 30-40s → 15-20s (با caching → <1s)
+4 phase pill نمایش داده می‌شه: Understanding → Planning → Execution → Verification
 
-✅ Success rate: 75% → 85-90%
+هر subtask به لیست اضافه می‌شه با icon مناسب (spinner/checkmark/error)
 
-✅ Confidence accuracy: ±15% → ±10%
+Progress bar پایین panel بر اساس phase update می‌شه
 
-✅ Zero crashes با empty DB یا translation failure
+بعد از 3 ثانیه از complete شدن، panel خودکار مخفی می‌شه
+
+📝 Summary تغییرات لازم
+Backend (api_server.py + main_engine.py):
+
+اضافه کردن WebSocket endpoint برای progress tracking
+
+Modify کردن orchestrator برای emit کردن updates
+
+تقسیم flow به 4 phase اصلی
+
+Frontend (static/index.html):
+
+اضافه کردن progress panel HTML
+
+اضافه کردن CSS styles
+
+اضافه کردن WebSocket client logic
+
+Connect کردن به sendMessage()
+
+تعداد خطوط تغییر: ~200 خط جدید

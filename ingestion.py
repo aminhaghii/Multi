@@ -303,18 +303,177 @@ This is an image/figure that can be displayed with markdown."""
             "chunks_with_images": chunks_with_images,
             "status": "success"
         }
+
+    def process_word(self, docx_path: str) -> Dict[str, Any]:
+        """Process Word document (.docx/.doc) and add to vector store"""
+        try:
+            from docx import Document as DocxDocument
+        except ImportError:
+            raise ImportError("python-docx is required. Install with: pip install python-docx")
+
+        filename = os.path.basename(docx_path)
+        file_hash = self._generate_file_hash(docx_path)
+
+        doc = DocxDocument(docx_path)
+        full_text = "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
+
+        chunks = self._chunk_text(full_text)
+        all_texts = []
+        all_metadatas = []
+        all_ids = []
+
+        for chunk_idx, chunk in enumerate(chunks):
+            chunk_id = f"{file_hash}_chunk_{chunk_idx}"
+            metadata = {
+                "source": docx_path,
+                "filename": filename,
+                "page": 0,
+                "chunk_index": chunk_idx,
+                "file_hash": file_hash,
+                "type": "word"
+            }
+            all_texts.append(chunk)
+            all_metadatas.append(metadata)
+            all_ids.append(chunk_id)
+
+        if all_texts:
+            self.vector_store.add_documents(all_texts, all_metadatas, all_ids)
+
+        return {"num_chunks": len(all_texts), "filename": filename, "status": "success"}
+
+    def process_markdown(self, md_path: str) -> Dict[str, Any]:
+        """Process Markdown file (.md) and add to vector store"""
+        filename = os.path.basename(md_path)
+        file_hash = self._generate_file_hash(md_path)
+
+        with open(md_path, 'r', encoding='utf-8') as f:
+            full_text = f.read()
+
+        chunks = self._chunk_text(full_text)
+        all_texts = []
+        all_metadatas = []
+        all_ids = []
+
+        for chunk_idx, chunk in enumerate(chunks):
+            chunk_id = f"{file_hash}_chunk_{chunk_idx}"
+            metadata = {
+                "source": md_path,
+                "filename": filename,
+                "page": 0,
+                "chunk_index": chunk_idx,
+                "file_hash": file_hash,
+                "type": "markdown"
+            }
+            all_texts.append(chunk)
+            all_metadatas.append(metadata)
+            all_ids.append(chunk_id)
+
+        if all_texts:
+            self.vector_store.add_documents(all_texts, all_metadatas, all_ids)
+
+        return {"num_chunks": len(all_texts), "filename": filename, "status": "success"}
+
+    def process_text(self, txt_path: str) -> Dict[str, Any]:
+        """Process plain text file (.txt) and add to vector store"""
+        filename = os.path.basename(txt_path)
+        file_hash = self._generate_file_hash(txt_path)
+
+        with open(txt_path, 'r', encoding='utf-8') as f:
+            full_text = f.read()
+
+        chunks = self._chunk_text(full_text)
+        all_texts = []
+        all_metadatas = []
+        all_ids = []
+
+        for chunk_idx, chunk in enumerate(chunks):
+            chunk_id = f"{file_hash}_chunk_{chunk_idx}"
+            metadata = {
+                "source": txt_path,
+                "filename": filename,
+                "page": 0,
+                "chunk_index": chunk_idx,
+                "file_hash": file_hash,
+                "type": "text"
+            }
+            all_texts.append(chunk)
+            all_metadatas.append(metadata)
+            all_ids.append(chunk_id)
+
+        if all_texts:
+            self.vector_store.add_documents(all_texts, all_metadatas, all_ids)
+
+        return {"num_chunks": len(all_texts), "filename": filename, "status": "success"}
+
+    def process_rtf(self, rtf_path: str) -> Dict[str, Any]:
+        """Process RTF file and add to vector store"""
+        try:
+            from striprtf.striprtf import rtf_to_text
+        except ImportError:
+            raise ImportError("striprtf is required. Install with: pip install striprtf")
+
+        filename = os.path.basename(rtf_path)
+        file_hash = self._generate_file_hash(rtf_path)
+
+        with open(rtf_path, 'r', encoding='utf-8', errors='ignore') as f:
+            rtf_content = f.read()
+
+        full_text = rtf_to_text(rtf_content)
+
+        chunks = self._chunk_text(full_text)
+        all_texts = []
+        all_metadatas = []
+        all_ids = []
+
+        for chunk_idx, chunk in enumerate(chunks):
+            chunk_id = f"{file_hash}_chunk_{chunk_idx}"
+            metadata = {
+                "source": rtf_path,
+                "filename": filename,
+                "page": 0,
+                "chunk_index": chunk_idx,
+                "file_hash": file_hash,
+                "type": "rtf"
+            }
+            all_texts.append(chunk)
+            all_metadatas.append(metadata)
+            all_ids.append(chunk_id)
+
+        if all_texts:
+            self.vector_store.add_documents(all_texts, all_metadatas, all_ids)
+
+        return {"num_chunks": len(all_texts), "filename": filename, "status": "success"}
+
+    def _generate_file_hash(self, file_path: str) -> str:
+        """Generate hash for any file"""
+        with open(file_path, 'rb') as f:
+            return hashlib.md5(f.read()).hexdigest()[:8]
     
     def process_directory(self, directory_path: str):
-        pdf_files = [f for f in os.listdir(directory_path) if f.endswith('.pdf')]
-        
+        supported_extensions = ['.pdf', '.docx', '.doc', '.md', '.txt', '.rtf']
+        files = [f for f in os.listdir(directory_path)
+                 if any(f.lower().endswith(ext) for ext in supported_extensions)]
+
         results = []
-        for pdf_file in pdf_files:
-            pdf_path = os.path.join(directory_path, pdf_file)
+        for file in files:
+            file_path = os.path.join(directory_path, file)
+            ext = os.path.splitext(file)[1].lower()
             try:
-                result = self.process_pdf(pdf_path)
+                if ext == '.pdf':
+                    result = self.process_pdf(file_path)
+                elif ext in ['.docx', '.doc']:
+                    result = self.process_word(file_path)
+                elif ext == '.md':
+                    result = self.process_markdown(file_path)
+                elif ext == '.txt':
+                    result = self.process_text(file_path)
+                elif ext == '.rtf':
+                    result = self.process_rtf(file_path)
+                else:
+                    raise ValueError(f"Unsupported extension: {ext}")
                 results.append(result)
             except Exception as e:
-                print(f"Error processing {pdf_file}: {e}")
-                results.append({"file": pdf_file, "status": "error", "error": str(e)})
-        
+                print(f"Error processing {file}: {e}")
+                results.append({"file": file, "status": "error", "error": str(e)})
+
         return results
