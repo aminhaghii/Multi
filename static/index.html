@@ -953,9 +953,10 @@
             safe = safe.replace(/\n/g, '<br>');
 
             images.forEach((img, index) => {
+                const sanitizedSrc = sanitizeImagePath(img.src);
                 const block = `
                     <div class="mt-3 bg-slate-50 border border-slate-200 rounded-xl p-3">
-                        <img src="${img.src}" alt="${img.alt}" class="w-full rounded-lg" onerror="this.closest('div').style.display='none'">
+                        <img src="${sanitizedSrc}" alt="${escapeHtml(img.alt)}" class="w-full rounded-lg" onerror="this.closest('div').style.display='none'">
                         <div class="text-xs text-slate-500 mt-2">${escapeHtml(img.alt)}</div>
                     </div>
                 `;
@@ -974,6 +975,18 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        // BUG-012 FIX: Sanitize image paths to prevent XSS attacks
+        function sanitizeImagePath(path) {
+            if (!path) return '';
+            // Only allow paths that start with /static/ (trusted paths)
+            if (!path.startsWith('/static/') && !path.startsWith('./static/')) {
+                console.warn('[XSS Prevention] Blocked untrusted image path:', path);
+                return '/static/images/placeholder.png';
+            }
+            // Remove any HTML/JS injection attempts
+            return path.replace(/[<>'"]/g, '');
         }
 
         async function deleteSession(sessionId) {

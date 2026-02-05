@@ -394,10 +394,18 @@ async def upload_image(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only PNG, JPG, JPEG files are allowed")
     
     os.makedirs("./data", exist_ok=True)
-    file_path = f"./data/{file.filename}"
+    
+    # Read content and check size (BUG-005 FIX)
+    content = await file.read()
+    file_size_mb = len(content) / (1024 * 1024)
+    if file_size_mb > MAX_FILE_SIZE_MB:
+        raise HTTPException(status_code=400, detail=f"File too large. Maximum size is {MAX_FILE_SIZE_MB}MB")
+    
+    # Sanitize filename
+    safe_filename = "".join(c for c in file.filename if c.isalnum() or c in '._-')
+    file_path = f"./data/{safe_filename}"
     
     with open(file_path, "wb") as f:
-        content = await file.read()
         f.write(content)
     
     try:
@@ -438,10 +446,18 @@ async def upload_audio(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only WAV, MP3, M4A, OGG files are allowed")
     
     os.makedirs("./data", exist_ok=True)
-    file_path = f"./data/{file.filename}"
+    
+    # Read content and check size (BUG-005 FIX)
+    content = await file.read()
+    file_size_mb = len(content) / (1024 * 1024)
+    if file_size_mb > MAX_FILE_SIZE_MB:
+        raise HTTPException(status_code=400, detail=f"File too large. Maximum size is {MAX_FILE_SIZE_MB}MB")
+    
+    # Sanitize filename
+    safe_filename = "".join(c for c in file.filename if c.isalnum() or c in '._-')
+    file_path = f"./data/{safe_filename}"
     
     with open(file_path, "wb") as f:
-        content = await file.read()
         f.write(content)
     
     try:

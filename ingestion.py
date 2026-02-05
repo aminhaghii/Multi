@@ -35,6 +35,22 @@ class DocumentProcessor:
             r'(?i)table\s*\d+[:\.\-\s]',
         ]
     
+    def _sanitize_filename(self, filename: str) -> str:
+        """Sanitize filename to prevent path traversal attacks."""
+        # Get just the basename (remove any path components)
+        base = os.path.basename(filename)
+        # Remove extension
+        base = os.path.splitext(base)[0]
+        # Replace any dangerous characters with underscore
+        # Only allow alphanumeric, spaces, hyphens, and underscores
+        safe = re.sub(r'[^\w\s-]', '_', base)
+        # Remove any leading/trailing whitespace
+        safe = safe.strip()
+        # Ensure not empty
+        if not safe:
+            safe = "unnamed_document"
+        return safe
+
     def _chunk_text(self, text: str) -> List[str]:
         words = text.split()
         chunks = []
@@ -169,7 +185,7 @@ class DocumentProcessor:
         
         print(f"Processing PDF: {pdf_path}")
         filename = os.path.basename(pdf_path)
-        filename_base = os.path.splitext(filename)[0]
+        filename_base = self._sanitize_filename(filename)
         
         with open(pdf_path, 'rb') as f:
             file_hash = hashlib.md5(f.read()).hexdigest()[:8]
