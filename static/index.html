@@ -96,12 +96,14 @@
         .message-assistant {
             background: #ffffff;
             color: #0f172a;
-            padding: 1rem 1.25rem;
+            padding: 0.8rem 1rem;
             border-radius: 1.125rem 1.125rem 1.125rem 0.25rem;
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
             border: 1px solid #e2e8f0;
-            max-width: 80%;
-            line-height: 1.7;
+            max-width: 72%;
+            line-height: 1.55;
+            font-size: 0.92rem;
+            letter-spacing: -0.005em;
         }
         .message-error {
             background: #fef2f2;
@@ -331,9 +333,9 @@
             </div>
         </main>
 
-        <!-- Canvas/Artifact Panel (Hidden by default, opens as full overlay) -->
-        <aside id="canvas-panel" class="bg-slate-900/95 backdrop-blur-sm flex-col shrink-0 hidden fixed inset-0 z-50">
-            <div class="h-14 bg-slate-800/90 border-b border-slate-700 flex items-center px-6 justify-between">
+        <!-- Canvas/Artifact Panel (Hidden by default, opens as right-side panel) -->
+        <aside id="canvas-panel" class="w-1/2 bg-slate-900 border-l border-slate-700 flex-col shrink-0 hidden fixed right-0 top-0 h-screen z-40 shadow-2xl">
+            <div class="h-14 bg-slate-800 border-b border-slate-700 flex items-center px-4 justify-between shrink-0">
                 <div class="flex items-center gap-3">
                     <i id="canvas-icon" class="fas fa-file-alt text-blue-400"></i>
                     <span id="canvas-title" class="font-medium text-white text-sm">Artifact</span>
@@ -351,8 +353,8 @@
                     </button>
                 </div>
             </div>
-            <div id="canvas-content" class="flex-1 overflow-auto bg-white p-8 flex items-center justify-center">
-                <!-- Artifact content renders here -->
+            <div id="canvas-content" class="flex-1 overflow-auto bg-white">
+                <!-- Content will be rendered here -->
             </div>
         </aside>
     </div>
@@ -1330,37 +1332,31 @@
 
         function renderArtifact(type, content, container) {
             container.innerHTML = '';
-            container.className = 'flex-1 overflow-auto bg-white p-8 flex items-center justify-center';
+            container.className = 'flex-1 overflow-auto bg-white';
             
             if (type === 'html' || type === 'report') {
-                const wrapper = document.createElement('div');
-                wrapper.className = 'w-full max-w-5xl';
                 const iframe = document.createElement('iframe');
-                iframe.className = 'w-full h-full border-0 min-h-[600px]';
+                iframe.className = 'w-full h-full border-0';
                 iframe.srcdoc = content;
-                wrapper.appendChild(iframe);
-                container.appendChild(wrapper);
+                container.appendChild(iframe);
             } else if (type === 'markdown') {
                 const div = document.createElement('div');
-                div.className = 'w-full max-w-4xl prose prose-slate prose-lg';
+                div.className = 'p-6 prose prose-slate max-w-none';
                 div.innerHTML = renderMarkdown(content);
                 container.appendChild(div);
             } else if (type === 'code') {
-                const wrapper = document.createElement('div');
-                wrapper.className = 'w-full max-w-5xl';
                 const pre = document.createElement('pre');
-                pre.className = 'p-6 bg-slate-900 text-green-400 font-mono text-sm overflow-auto rounded-lg';
+                pre.className = 'p-4 bg-slate-900 text-green-400 font-mono text-sm overflow-auto h-full';
                 pre.textContent = content;
-                wrapper.appendChild(pre);
-                container.appendChild(wrapper);
+                container.appendChild(pre);
             } else if (type === 'table') {
                 const div = document.createElement('div');
-                div.className = 'w-full max-w-6xl overflow-auto';
+                div.className = 'p-4 overflow-auto';
                 div.innerHTML = content;
                 container.appendChild(div);
             } else {
                 const div = document.createElement('div');
-                div.className = 'w-full max-w-4xl whitespace-pre-wrap text-slate-800 leading-relaxed';
+                div.className = 'p-6 whitespace-pre-wrap';
                 div.textContent = content;
                 container.appendChild(div);
             }

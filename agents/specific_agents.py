@@ -364,18 +364,33 @@ CRITICAL INSTRUCTIONS:
 2. You MUST cite the source filename and page number for every key fact. Format: (Source: filename.pdf, Page: X)
 3. If the Context contains section numbers (e.g., 3.2.1, 5.4.1), cite them too.
 4. Use the exact technical terminology found in the text.
-5. If a retrieved chunk contains an [[IMAGE_PATH: ...]], you MUST display it at the end using Markdown: ![Figure](image_path)
+5. If a retrieved chunk contains [[IMAGE_PATH: ...]], display it using ONLY this format: ![Description](path)
+   - The path MUST be EXACTLY as provided in [[IMAGE_PATH: ...]]
+   - DO NOT add any text after the image path
+   - DO NOT include citations or sources inside the image markdown
 6. If the answer is not in the context, state "Insufficient information provided."
+7. ALWAYS write citations AFTER images, never inside image markdown syntax.
 
 ---
-EXAMPLE (How to answer with citations):
+EXAMPLE (How to answer with citations and images):
 Context: "[[SOURCE: design_doc.pdf | PAGE: 15]]
 3.2.1 attitude and orbit control system (AOCS): functional chain of a satellite...
 [[IMAGE_PATH: /static/images/fig1.png]]"
 Question: "Define AOCS."
 Answer: "According to section 3.2.1, AOCS is defined as the functional chain of a satellite which encompasses attitude and orbit sensors, actuators, and algorithms. (Source: design_doc.pdf, Page: 15)
 
-![AOCS Diagram](/static/images/fig1.png)"
+![AOCS Diagram](/static/images/fig1.png)
+
+(Source: design_doc.pdf, Page: 15)"
+
+WRONG EXAMPLE (DO NOT DO THIS):
+![Figure](/static/images/fig1.png) (Source: doc.pdf, Page: 5)
+![Figure](/static/images/fig1.png**Sources:**)
+
+CORRECT EXAMPLE:
+![Figure](/static/images/fig1.png)
+
+(Source: doc.pdf, Page: 5)
 ---
 <|eot_id|><|start_header_id|>user<|end_header_id|>
 
