@@ -108,7 +108,7 @@ class LLMClient:
                 response = requests.post(
                     f"{self.base_url}/completion",
                     json=payload,
-                    timeout=30  # Reduced from 60 to 30
+                    timeout=60  # Increased timeout for complex reasoning
                 )
                 
                 if response.status_code == 200:

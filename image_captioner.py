@@ -4,6 +4,7 @@ os.environ["TRANSFORMERS_NO_TF"] = "1"
 from PIL import Image
 import torch
 from transformers import BlipProcessor, BlipForConditionalGeneration
+from pathlib import Path
 
 class ImageCaptioner:
     def __init__(self):
@@ -13,18 +14,38 @@ class ImageCaptioner:
         # Use local cache for offline operation
         cache_dir = os.path.join(os.path.dirname(__file__), 'model_cache')
         os.makedirs(cache_dir, exist_ok=True)
+
+        local_path = self._resolve_local_snapshot(
+            cache_dir,
+            'Salesforce/blip-image-captioning-base'
+        )
+        model_source = local_path if local_path else "Salesforce/blip-image-captioning-base"
+        load_kwargs = {}
+        if not local_path:
+            load_kwargs["cache_dir"] = cache_dir
         
         self.processor = BlipProcessor.from_pretrained(
-            "Salesforce/blip-image-captioning-base",
-            cache_dir=cache_dir
+            model_source,
+            **load_kwargs
         )
         self.model = BlipForConditionalGeneration.from_pretrained(
-            "Salesforce/blip-image-captioning-base",
-            cache_dir=cache_dir,
-            torch_dtype=torch.float16 if self.device == "cuda" else torch.float32
+            model_source,
+            torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+            **load_kwargs
         ).to(self.device)
         
         print("BLIP model loaded successfully")
+
+    def _resolve_local_snapshot(self, cache_dir: str, repo_id: str) -> str:
+        """Return path to first local snapshot of a HF repo if exists."""
+        safe_repo = repo_id.replace('/', '--')
+        repo_root = Path(cache_dir) / f"models--{safe_repo}"
+        snapshots_dir = repo_root / "snapshots"
+        if snapshots_dir.is_dir():
+            for snap in snapshots_dir.iterdir():
+                if snap.is_dir():
+                    return str(snap)
+        return ""
     
     def _clean_caption(self, caption: str) -> str:
         """

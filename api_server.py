@@ -654,6 +654,22 @@ async def get_session(session_id: str, include_messages: bool = False):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a chat session"""
+    if not SESSION_SUPPORT:
+        return {"success": True, "message": "Session deleted (session support disabled)"}
+    try:
+        success = session_manager.delete_session(session_id)
+        if success:
+            return {"success": True, "message": "Session deleted successfully"}
+        else:
+            raise HTTPException(status_code=404, detail="Session not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/export")
 async def export_history(request: ExportRequest):
     """Export chat history to specified format"""

@@ -4,6 +4,7 @@ from sentence_transformers import SentenceTransformer
 from typing import List, Dict, Any
 import os
 import pickle
+from pathlib import Path
 
 class VectorStore:
     def __init__(self, persist_directory: str = "./faiss_db"):
@@ -13,11 +14,8 @@ class VectorStore:
         # Use local cache for offline operation
         cache_dir = os.path.join(os.path.dirname(__file__), 'model_cache')
         os.makedirs(cache_dir, exist_ok=True)
-        
-        self.embedding_model = SentenceTransformer(
-            'sentence-transformers/all-MiniLM-L6-v2',
-            cache_folder=cache_dir
-        )
+
+        self.embedding_model = self._load_embedding_model(cache_dir)
         self.dimension = 384
         
         self.index_path = os.path.join(persist_directory, "index.faiss")
@@ -50,6 +48,28 @@ class VectorStore:
         self.documents = []
         self.metadatas = []
         self.ids = []
+
+    def _resolve_local_snapshot(self, cache_dir: str, repo_id: str) -> str:
+        """Return the path to the first local snapshot of a HF repo if it exists."""
+        safe_repo = repo_id.replace('/', '--')
+        repo_root = Path(cache_dir) / f"models--{safe_repo}"
+        snapshots_dir = repo_root / "snapshots"
+        if snapshots_dir.is_dir():
+            for child in snapshots_dir.iterdir():
+                if child.is_dir():
+                    return str(child)
+        return ""
+
+    def _load_embedding_model(self, cache_dir: str) -> SentenceTransformer:
+        """Load SentenceTransformer from local cache if available to avoid network calls."""
+        local_path = self._resolve_local_snapshot(cache_dir, 'sentence-transformers/all-MiniLM-L6-v2')
+        if local_path:
+            try:
+                return SentenceTransformer(local_path)
+            except Exception as exc:
+                print(f"Warning: Failed to load local embedding model at {local_path}: {exc}")
+        # Fallback to default behavior (may require network on first run)
+        return SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', cache_folder=cache_dir)
     
     def _rebuild_index(self):
         """Rebuild FAISS index from documents"""

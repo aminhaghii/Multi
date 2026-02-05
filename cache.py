@@ -11,8 +11,25 @@ class ResponseCache:
     
     def __init__(self, db_path: str = "./cache/responses.db"):
         self.db_path = db_path
-        self._init_db()
+        self._ensure_db()
     
+    def _ensure_db(self):
+        """Ensure the cache DB file and schema exist (handles manual deletions)."""
+        db_exists = os.path.exists(self.db_path)
+        if not db_exists:
+            self._init_db()
+            return
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='cached_responses'"
+                )
+                if cursor.fetchone() is None:
+                    self._init_db()
+        except sqlite3.OperationalError:
+            self._init_db()
+
     def _init_db(self):
         """Initialize SQLite database with proper schema"""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
@@ -84,6 +101,7 @@ class ResponseCache:
     
     def get(self, user_query: str) -> Optional[Dict[str, Any]]:
         """Retrieve cached response if valid and not expired"""
+        self._ensure_db()
         query_hash = self._generate_query_hash(user_query)
         current_kb_hash = self._generate_kb_hash()
         
@@ -134,6 +152,7 @@ class ResponseCache:
     
     def set(self, user_query: str, response_data: Dict[str, Any], ttl_hours: int = 24):
         """Cache a successful response"""
+        self._ensure_db()
         query_hash = self._generate_query_hash(user_query)
         kb_hash = self._generate_kb_hash()
         
@@ -157,6 +176,7 @@ class ResponseCache:
     
     def invalidate_by_kb(self):
         """Invalidate all cached responses when knowledge base changes"""
+        self._ensure_db()
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
@@ -177,6 +197,7 @@ class ResponseCache:
     
     def clear_all(self):
         """Clear all cached responses"""
+        self._ensure_db()
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM cached_responses")
@@ -188,6 +209,7 @@ class ResponseCache:
     
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics"""
+        self._ensure_db()
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
@@ -217,6 +239,7 @@ class ResponseCache:
     
     def cleanup_expired(self):
         """Remove expired entries"""
+        self._ensure_db()
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             

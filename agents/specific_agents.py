@@ -127,12 +127,39 @@ class RetrievalAgent(BaseAgent):
         
         self.log(f"Retrieved {len(results['documents'])} documents")
         
+        def _normalize_image_path(image_path: str) -> str:
+            """Ensure image paths are web-accessible under /static/images/ to avoid 404s."""
+            if not image_path:
+                return ""
+            if image_path.startswith("/static/images/"):
+                return image_path
+            normalized = image_path.replace("\\", "/")
+            marker = "/static/images/"
+            if marker in normalized:
+                return normalized[normalized.index(marker):]
+            if normalized.startswith("./static/images/"):
+                return normalized.replace("./static", "")
+            return image_path
+        
+        retrieved_metadata = []
+        for meta in results['metadatas']:
+            if 'images' in meta and isinstance(meta['images'], str):
+                normalized_paths = [
+                    _normalize_image_path(p.strip())
+                    for p in meta['images'].split(',')
+                    if p.strip()
+                ]
+                meta['images'] = ",".join(normalized_paths)
+            if meta.get('image_path'):
+                meta['image_path'] = _normalize_image_path(meta['image_path'])
+            retrieved_metadata.append(meta)
+        
         return {
             "success": True,
             "retrieved_docs": results['documents'],
-            "retrieved_metadata": results['metadatas'],
-            "distances": results['distances'],
-            "num_results": len(results['documents'])
+            "retrieved_metadata": retrieved_metadata,
+            "retrieved_ids": results['ids'],
+            "search_query": search_query
         }
 
 
@@ -438,15 +465,8 @@ Answer:"""
             if citation_list:
                 answer += "\n\n**Sources:**\n" + "\n".join(citation_list)
         
-        # HARD FIX: Append image markdown if images were retrieved
-        if response_image_paths:
-            answer += "\n\n**Related Figures:**\n"
-            for img_info in response_image_paths[:3]:  # Max 3 images
-                img_path = img_info.get('path', '')
-                img_source = img_info.get('source', '')
-                img_page = img_info.get('page', 0)
-                if img_path:
-                    answer += f"![Figure from {img_source} Page {img_page}]({img_path})\n"
+        # Images are already included in LLM response via [[IMAGE_PATH:...]] markers in prompt
+        # No need to append them again to avoid duplicates
         
         self.log(f"Generated answer ({len(answer)} chars)")
         
