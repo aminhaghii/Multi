@@ -3,6 +3,7 @@ import os
 import requests
 import json
 import time
+import asyncio  # BUG-013 FIX: For async operations
 from pathlib import Path
 
 # Add current directory to path
@@ -127,7 +128,8 @@ class LLMClient:
                 else:
                     if attempt < max_retries - 1:
                         print(f"HTTP {response.status_code} on attempt {attempt + 1}, retrying...")
-                        time.sleep(2 ** attempt)
+                        # BUG-014 FIX: Cap sleep time at 30 seconds
+                        time.sleep(min(30, 2 ** attempt))
                         continue
                     return {
                         "success": False,
@@ -137,7 +139,8 @@ class LLMClient:
             except (requests.Timeout, requests.ConnectionError) as e:
                 if attempt < max_retries - 1:
                     print(f"Connection error on attempt {attempt + 1}, retrying...")
-                    time.sleep(2 ** attempt)
+                    # BUG-014 FIX: Cap sleep time at 30 seconds
+                    time.sleep(min(30, 2 ** attempt))
                     continue
                 return {
                     "success": False,
@@ -165,6 +168,10 @@ class LLMClient:
             images_data = []
             for img_path in image_paths:
                 if os.path.exists(img_path):
+                    # BUG-015 FIX: Check file size before loading to prevent memory spike
+                    file_size = os.path.getsize(img_path)
+                    if file_size > 5 * 1024 * 1024:  # 5MB limit
+                        raise ValueError(f"Image too large: {img_path} ({file_size / 1024 / 1024:.1f}MB > 5MB limit)")
                     with open(img_path, 'rb') as f:
                         img_data = base64.b64encode(f.read()).decode('utf-8')
                         images_data.append(img_data)

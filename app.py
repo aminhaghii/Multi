@@ -16,8 +16,19 @@ st.set_page_config(
     layout="wide"
 )
 
-@st.cache_resource
+# BUG-027 FIX: Remove @st.cache_resource to prevent data leak between users
+# Use session_state for per-user isolation
 def initialize_system():
+    # Check if already initialized in this session
+    if 'vector_store' in st.session_state:
+        return (
+            st.session_state.llm_client,
+            st.session_state.vector_store,
+            st.session_state.processor,
+            st.session_state.orchestrator
+        )
+    
+    # Initialize fresh for this user session
     llm_client = LLMClient(base_url="http://127.0.0.1:8080")
     vector_store = VectorStore(persist_directory="./faiss_db")
     processor = DocumentProcessor(vector_store, chunk_size=500, chunk_overlap=50)
@@ -35,6 +46,13 @@ def initialize_system():
         max_refinement_iterations=2,
         confidence_threshold=0.7
     )
+    
+    # Store in session state for this user only
+    st.session_state.llm_client = llm_client
+    st.session_state.vector_store = vector_store
+    st.session_state.processor = processor
+    st.session_state.orchestrator = orchestrator
+    
     return llm_client, vector_store, processor, orchestrator
 
 st.title("Agentic Research Assistant")
@@ -101,6 +119,10 @@ with st.sidebar:
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error: {e}")
+                    finally:
+                        # BUG-026 FIX: Clean up temp file
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
     
     elif upload_type == "Image":
         uploaded_image = st.file_uploader(
@@ -144,6 +166,10 @@ with st.sidebar:
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error: {e}")
+                    finally:
+                        # BUG-026 FIX: Clean up temp file
+                        if os.path.exists(img_path):
+                            os.remove(img_path)
     
     elif upload_type == "Voice":
         uploaded_audio = st.file_uploader(
@@ -188,6 +214,10 @@ with st.sidebar:
                             st.error(transcription)
                     except Exception as e:
                         st.error(f"Error: {e}")
+                    finally:
+                        # BUG-026 FIX: Clean up temp file
+                        if os.path.exists(audio_path):
+                            os.remove(audio_path)
     
     st.markdown("---")
     if st.button("Clear Chat History"):
@@ -212,10 +242,13 @@ for message in st.session_state.chat_history:
 user_query = st.chat_input("Ask a question about your documents...", disabled=not server_healthy)
 
 if user_query:
-    st.session_state.chat_history.append({
+    # BUG-023 FIX: Use copy to prevent race condition between browser tabs
+    new_history = st.session_state.chat_history.copy()
+    new_history.append({
         "role": "user",
         "content": user_query
     })
+    st.session_state.chat_history = new_history
     
     with st.chat_message("user"):
         st.markdown(user_query)
@@ -240,18 +273,24 @@ if user_query:
                 col3.metric("Iterations", result['num_iterations'])
                 col4.metric("Sources", result['num_sources'])
                 
-                st.session_state.chat_history.append({
+                # BUG-023 FIX: Use copy to prevent race condition
+                new_history = st.session_state.chat_history.copy()
+                new_history.append({
                     "role": "assistant",
                     "content": result['answer'],
                     "metadata": metadata
                 })
+                st.session_state.chat_history = new_history
             else:
                 error_msg = f"Error: {result.get('error', 'Unknown error')}"
                 st.error(error_msg)
-                st.session_state.chat_history.append({
+                # BUG-023 FIX: Use copy to prevent race condition
+                new_history = st.session_state.chat_history.copy()
+                new_history.append({
                     "role": "assistant",
                     "content": error_msg
                 })
+                st.session_state.chat_history = new_history
 
 st.markdown("---")
 
