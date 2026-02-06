@@ -71,19 +71,25 @@ class ResponseCache:
         normalized_query = user_query.strip().lower()
         return hashlib.sha256(normalized_query.encode()).hexdigest()
     
+    def set_vector_store(self, vector_store):
+        """Set the vector store reference to avoid re-creating it on every call"""
+        self._vector_store = vector_store
+
     def _generate_kb_hash(self, vector_store=None) -> str:
         """Generate hash representing current knowledge base state"""
         try:
-            # Use passed vector_store or try to get from global
-            vs = vector_store
+            # Use passed vector_store, cached reference, or fallback
+            vs = vector_store or getattr(self, '_vector_store', None)
             if vs is None:
-                # Try to import and use existing instance
+                # Lightweight check: just use file existence and size
                 try:
-                    from vector_store import VectorStore
-                    import os
-                    # Check if index exists to avoid creating new one
-                    if os.path.exists("./faiss_db/index.faiss"):
-                        vs = VectorStore(persist_directory="./faiss_db")
+                    index_path = "./faiss_db/index.faiss"
+                    if os.path.exists(index_path):
+                        file_size = os.path.getsize(index_path)
+                        meta_path = "./faiss_db/metadata.json"
+                        meta_size = os.path.getsize(meta_path) if os.path.exists(meta_path) else 0
+                        kb_state = f"file_{file_size}_{meta_size}"
+                        return hashlib.md5(kb_state.encode()).hexdigest()
                     else:
                         return hashlib.md5("empty_kb".encode()).hexdigest()
                 except Exception:

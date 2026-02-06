@@ -32,7 +32,7 @@ class SessionManager:
                 status=SessionStatus.ACTIVE.value,
                 rag_collection_id=rag_collection_id,
                 user_id=user_id,
-                metadata={"created_via": "session_manager"}
+                extra_data={"created_via": "session_manager"}
             )
             db.add(session)
             
@@ -41,10 +41,9 @@ class SessionManager:
                 session_id=session_id,
                 type=CollectionType.SESSION.value,
                 name=f"Session {session_id[:8]}",
-                metadata={"isolated": True}
+                extra_data={"isolated": True}
             )
             db.add(rag_collection)
-            db.commit()
             
             result = session.to_dict()
         
@@ -92,7 +91,6 @@ class SessionManager:
                     setattr(session, key, value)
             
             session.updated_at = datetime.utcnow()
-            db.commit()
             return session.to_dict()
     
     def archive_session(self, session_id: str) -> bool:
@@ -104,20 +102,20 @@ class SessionManager:
     
     def delete_session(self, session_id: str, hard_delete: bool = False) -> bool:
         """Delete a session (soft or hard)"""
+        success = False
         if hard_delete:
             with get_db_session() as db:
                 session = db.query(Session).filter(Session.id == session_id).first()
                 if session:
                     db.delete(session)
-                    db.commit()
-                    return True
+                    success = True
         else:
             result = self.update_session(session_id, status=SessionStatus.DELETED.value)
-            return result is not None
+            success = result is not None
         
-        if session_id in self.active_sessions:
+        if success and session_id in self.active_sessions:
             del self.active_sessions[session_id]
-        return False
+        return success
     
     def add_message(self, session_id: str, role: str, content: str, metadata: Optional[Dict] = None) -> Dict[str, Any]:
         """Add a message to session"""
@@ -129,7 +127,7 @@ class SessionManager:
                 session_id=session_id,
                 role=role,
                 content=content,
-                metadata=metadata or {}
+                extra_data=metadata or {}
             )
             db.add(message)
             
@@ -139,7 +137,6 @@ class SessionManager:
                 if not session.title or session.title == "New Chat":
                     session.title = content[:50] + "..." if len(content) > 50 else content
             
-            db.commit()
             result = message.to_dict()
         
         if session_id in self.active_sessions:

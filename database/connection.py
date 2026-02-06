@@ -84,18 +84,31 @@ def get_db():
 
 
 class DatabaseManager:
-    """High-level database operations manager"""
+    """High-level database operations manager with lazy initialization"""
     
     def __init__(self):
-        self.engine = get_engine()
-        self.SessionLocal = get_session_factory()
-        init_database()
+        self._initialized = False
+        self.engine = None
+        self.SessionLocal = None
+    
+    def _ensure_initialized(self):
+        if not self._initialized:
+            try:
+                self.engine = get_engine()
+                self.SessionLocal = get_session_factory()
+                init_database()
+                self._initialized = True
+            except Exception as e:
+                print(f"Warning: Database initialization failed: {e}")
+                raise
     
     def create_session(self) -> Session:
+        self._ensure_initialized()
         return self.SessionLocal()
     
     @contextmanager
     def session_scope(self):
+        self._ensure_initialized()
         session = self.create_session()
         try:
             yield session

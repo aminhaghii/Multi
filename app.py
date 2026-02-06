@@ -31,7 +31,7 @@ def initialize_system():
     # Initialize fresh for this user session
     llm_client = LLMClient(base_url="http://127.0.0.1:8080")
     vector_store = VectorStore(persist_directory="./faiss_db")
-    processor = DocumentProcessor(vector_store, chunk_size=500, chunk_overlap=50)
+    processor = DocumentProcessor(vector_store, chunk_size=800, chunk_overlap=160)
     
     try:
         image_captioner = ImageCaptioner()
@@ -89,6 +89,13 @@ with st.sidebar:
         import shutil
         if os.path.exists("./faiss_db"):
             shutil.rmtree("./faiss_db")
+        # Re-init vector store, processor and orchestrator to prevent stale references
+        new_vs = VectorStore(persist_directory="./faiss_db")
+        new_proc = DocumentProcessor(new_vs, chunk_size=800, chunk_overlap=160)
+        st.session_state.vector_store = new_vs
+        st.session_state.processor = new_proc
+        if hasattr(st.session_state, 'orchestrator') and st.session_state.orchestrator:
+            st.session_state.orchestrator.update_vector_store(new_vs)
         st.success("Knowledge base cleared")
         st.rerun()
     
@@ -132,7 +139,7 @@ with st.sidebar:
         )
         
         if uploaded_image is not None:
-            st.image(uploaded_image, caption="Uploaded Image", use_column_width=True)
+            st.image(uploaded_image, caption="Uploaded Image", use_container_width=True)
             
             if st.button("Process Image"):
                 with st.spinner("Captioning image..."):

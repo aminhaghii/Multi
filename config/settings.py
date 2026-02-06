@@ -33,7 +33,7 @@ class Settings:
         self.database_url = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR}/assistant.db")
         
         self.embedding_model = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
-        self.vector_db_path = DATA_DIR / "chroma_db"
+        self.vector_db_path = DATA_DIR / "faiss_db"
         
         self.max_context_length = 4096
         self.confidence_threshold = 0.7

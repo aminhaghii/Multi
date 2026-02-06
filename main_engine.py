@@ -5,6 +5,7 @@ from cache import get_cache
 from typing import Dict, Any, Optional, Callable
 import time
 import re
+import threading
 
 # Translation support
 try:
@@ -37,7 +38,7 @@ class Orchestrator:
         self.vector_store = vector_store
         self.max_refinement_iterations = max_refinement_iterations
         self.confidence_threshold = confidence_threshold
-        self.relevance_threshold = 0.85
+        self.relevance_threshold = 0.5
         
         self.query_agent = QueryUnderstandingAgent(llm_client)
         
@@ -53,7 +54,17 @@ class Orchestrator:
         self.verification_agent = VerificationAgent(llm_client)
         
         self.execution_log = []
+        self._log_lock = threading.Lock()
         self.cache = get_cache()
+    
+    def update_vector_store(self, new_vector_store: VectorStore):
+        """Update vector store reference after KB clear/rebuild"""
+        self.vector_store = new_vector_store
+        if HYBRID_AVAILABLE:
+            self.retrieval_agent = HybridRetrievalAgent(new_vector_store)
+        else:
+            self.retrieval_agent = RetrievalAgent(new_vector_store)
+        print("🔄 Orchestrator vector store updated")
     
     def log_step(self, step: str, details: Dict[str, Any]):
         log_entry = {
@@ -61,7 +72,8 @@ class Orchestrator:
             "timestamp": time.time(),
             "details": details
         }
-        self.execution_log.append(log_entry)
+        with self._log_lock:
+            self.execution_log.append(log_entry)
     
     def _is_non_english(self, text: str) -> bool:
         """Detect if text contains non-English characters (Persian, Arabic, etc.)"""
@@ -144,19 +156,18 @@ class Orchestrator:
             'سلام', 'خوبی', 'چطوری', 'ممنون', 'تشکر', 'خداحافظ', 'چه خبر'
         ]
         
-        query_lower = user_query.lower()
-        
-        # Check for exact matches or very short queries
+        query_lower = user_query.lower().strip()
         words = query_lower.split()
-        if len(words) <= 2:
-            return 'casual'
-            
+        
+        # Only classify as casual if it MATCHES a casual pattern
         for pattern in casual_patterns:
-            if pattern in query_lower:
-                # If it's a long query containing "salam", it might still be specialized
-                # but if it's just the pattern or the pattern plus a few words, it's casual
+            if query_lower == pattern or query_lower.startswith(pattern + ' ') or query_lower.endswith(' ' + pattern):
                 if len(words) <= 5:
                     return 'casual'
+        
+        # Very short single-word greetings only
+        if len(words) == 1 and words[0] in ['hi', 'hello', 'hey', 'salam', 'سلام', 'bye', 'thanks', 'mersi', 'ممنون']:
+            return 'casual'
         
         return 'specialized'
     
@@ -209,17 +220,7 @@ class Orchestrator:
             if progress_callback:
                 progress_callback(event)
 
-        # FIX 4: Translation layer for non-English queries
-        if self._is_non_english(user_query):
-            print(f" Detected non-English query: {user_query}")
-            user_query, original_lang = self._translate_query(user_query)
-            self.log_step("translation", {
-                "original_query": original_query,
-                "translated_query": user_query,
-                "original_lang": original_lang
-            })
-        
-        # Check cache first for specialized queries
+        # Detect casual queries BEFORE translation to avoid unnecessary latency
         query_type = self._detect_query_type(user_query)
         print(f"QUERY TYPE: {query_type}")
         print("-" * 70)
@@ -230,6 +231,16 @@ class Orchestrator:
             emit({"type": "phase_end", "phase": "query_understanding"})
             print("Handling as casual query (no RAG needed)")
             return self._handle_casual_query(user_query)
+        
+        # Translation layer for non-English queries (after casual check to avoid unnecessary latency)
+        if self._is_non_english(user_query):
+            print(f" Detected non-English query: {user_query}")
+            user_query, original_lang = self._translate_query(user_query)
+            self.log_step("translation", {
+                "original_query": original_query,
+                "translated_query": user_query,
+                "original_lang": original_lang
+            })
         
         # Try cache for specialized queries
         cached_response = self.cache.get(user_query) if use_cache else None
@@ -306,24 +317,46 @@ class Orchestrator:
         print(f"Retrieved {num_results} documents")
         
         if num_results == 0:
-            print("⚠ No relevant documents found in knowledge base")
-            emit({"type": "phase_start", "phase": "reasoning", "message": "No documents to reason over"})
-            emit({"type": "phase_text", "phase": "reasoning", "text": "No relevant documents found."})
-            emit({"type": "phase_end", "phase": "reasoning"})
-            emit({"type": "phase_start", "phase": "verification", "message": "Skipping verification"})
-            emit({"type": "phase_text", "phase": "verification", "text": "No answer to verify."})
-            emit({"type": "phase_end", "phase": "verification"})
-            return {
-                "success": True,
-                "query": user_query,
-                "answer": "I don't have relevant information in my knowledge base to answer this specialized question. Please upload related documents first.",
-                "confidence": 0.0,
-                "verified": False,
-                "num_iterations": 0,
-                "num_sources": 0,
-                "query_type": "specialized_no_docs",
-                "execution_log": self.execution_log
-            }
+            # Check if vector store actually has documents - if so, do direct search fallback
+            kb_count = self.vector_store.get_collection_count()
+            if kb_count > 0:
+                print(f"⚠ Hybrid search returned 0 but KB has {kb_count} docs. Trying direct vector search...")
+                direct_results = self.vector_store.search(user_query, k=5)
+                direct_docs = direct_results.get('documents', [])
+                if direct_docs:
+                    print(f"✓ Direct search found {len(direct_docs)} documents")
+                    retrieval_result = {
+                        "success": True,
+                        "documents": direct_docs,
+                        "metadatas": direct_results.get('metadatas', []),
+                        "retrieved_docs": direct_docs,
+                        "retrieved_metadata": direct_results.get('metadatas', []),
+                        "distances": direct_results.get('distances', []),
+                        "num_results": len(direct_docs),
+                        "retrieval_method": "direct_fallback"
+                    }
+                    context.update(retrieval_result)
+                    num_results = len(direct_docs)
+            
+            if num_results == 0:
+                print("⚠ No relevant documents found in knowledge base")
+                emit({"type": "phase_start", "phase": "reasoning", "message": "No documents to reason over"})
+                emit({"type": "phase_text", "phase": "reasoning", "text": "No relevant documents found."})
+                emit({"type": "phase_end", "phase": "reasoning"})
+                emit({"type": "phase_start", "phase": "verification", "message": "Skipping verification"})
+                emit({"type": "phase_text", "phase": "verification", "text": "No answer to verify."})
+                emit({"type": "phase_end", "phase": "verification"})
+                return {
+                    "success": True,
+                    "query": user_query,
+                    "answer": "I don't have relevant information in my knowledge base to answer this specialized question. Please upload related documents first.",
+                    "confidence": 0.0,
+                    "verified": False,
+                    "num_iterations": 0,
+                    "num_sources": 0,
+                    "query_type": "specialized_no_docs",
+                    "execution_log": self.execution_log
+                }
         
         distances = retrieval_result.get('distances', [])
         best_distance = distances[0] if distances and len(distances) > 0 else 1.0
@@ -506,7 +539,6 @@ class Orchestrator:
     
     def _convert_to_html_paragraphs(self, text: str) -> str:
         """Convert plain text to HTML paragraphs"""
-        import re
         paragraphs = text.split('\n\n')
         html_parts = []
         for p in paragraphs:

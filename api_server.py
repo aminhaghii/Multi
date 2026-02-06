@@ -3,7 +3,9 @@ os.environ["TRANSFORMERS_NO_TF"] = "1"
 
 import faiss
 import numpy as np
+import hashlib
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -37,7 +39,7 @@ app = FastAPI(title="Agentic Research Assistant API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -47,10 +49,12 @@ vector_store = None
 processor = None
 orchestrator = None
 image_captioner = None
+voice_transcriber = None
 cache = None
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: Optional[str] = None  # For chat history persistence
 
 class ImageInfo(BaseModel):
     path: str
@@ -90,13 +94,14 @@ class DocumentNode(BaseModel):
     metadata: dict
 
 @app.on_event("startup")
-async def startup():
-    global llm_client, vector_store, processor, orchestrator, image_captioner, cache
+async def startup():  # TODO: migrate to lifespan context manager when upgrading FastAPI
+    global llm_client, vector_store, processor, orchestrator, image_captioner, voice_transcriber, cache
     
     llm_client = LLMClient(base_url="http://127.0.0.1:8080")
     vector_store = VectorStore(persist_directory="./faiss_db")
     processor = DocumentProcessor(vector_store, chunk_size=800, chunk_overlap=160)
     cache = get_cache()
+    cache.set_vector_store(vector_store)
     
     try:
         from image_captioner import ImageCaptioner
@@ -104,6 +109,13 @@ async def startup():
     except Exception as e:
         print(f"Warning: Could not load image captioner: {e}")
         image_captioner = None
+    
+    try:
+        from voice_transcriber import VoiceTranscriber
+        voice_transcriber = VoiceTranscriber(model_size="tiny")
+    except Exception as e:
+        print(f"Warning: Could not load voice transcriber: {e}")
+        voice_transcriber = None
     
     orchestrator = Orchestrator(
         llm_client=llm_client,
@@ -177,10 +189,38 @@ async def chat(request: ChatRequest):
             error="LLM Server is offline"
         )
     
+    # CHAT PERSISTENCE FIX: Save user message to database
+    if SESSION_SUPPORT and request.session_id:
+        try:
+            session_manager.add_message(
+                session_id=request.session_id,
+                role="user",
+                content=request.message
+            )
+        except Exception as e:
+            print(f"Warning: Failed to save user message: {e}")
+    
     try:
         result = orchestrator.run_query(request.message)
         
         if result['success']:
+            # CHAT PERSISTENCE FIX: Save assistant response to database
+            if SESSION_SUPPORT and request.session_id:
+                try:
+                    session_manager.add_message(
+                        session_id=request.session_id,
+                        role="assistant",
+                        content=result['answer'],
+                        metadata={
+                            "confidence": result.get('confidence'),
+                            "verified": result.get('verified'),
+                            "sources": result.get('num_sources'),
+                            "iterations": result.get('num_iterations')
+                        }
+                    )
+                except Exception as e:
+                    print(f"Warning: Failed to save assistant message: {e}")
+            
             # Get image_paths directly from response
             image_paths = []
             raw_image_paths = result.get('image_paths', [])
@@ -242,9 +282,20 @@ async def chat_stream(request: ChatRequest):
     if not llm_client.health_check():
         raise HTTPException(status_code=503, detail="LLM Server is offline")
 
+    # CHAT PERSISTENCE FIX: Save user message to database at start of stream
+    if SESSION_SUPPORT and request.session_id:
+        try:
+            session_manager.add_message(
+                session_id=request.session_id,
+                role="user",
+                content=request.message
+            )
+        except Exception as e:
+            print(f"Warning: Failed to save user message in stream: {e}")
+
     def event_generator():
         queue: Queue = Queue()
-
+        
         def progress_callback(event):
             queue.put({"type": "progress", "payload": event})
 
@@ -293,6 +344,23 @@ async def chat_stream(request: ChatRequest):
                     }
 
                 queue.put({"type": "final", "payload": payload})
+                
+                # CHAT PERSISTENCE FIX: Save assistant response to database
+                if SESSION_SUPPORT and request.session_id and result.get('success'):
+                    try:
+                        session_manager.add_message(
+                            session_id=request.session_id,
+                            role="assistant",
+                            content=result.get('answer', ''),
+                            metadata={
+                                "confidence": result.get('confidence'),
+                                "verified": result.get('verified'),
+                                "sources": result.get('num_sources'),
+                                "iterations": result.get('num_iterations')
+                            }
+                        )
+                    except Exception as e:
+                        print(f"Warning: Failed to save assistant message in stream: {e}")
             except Exception as exc:
                 queue.put({"type": "error", "payload": {"error": str(exc)}})
             finally:
@@ -314,10 +382,15 @@ async def upload_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
     
     os.makedirs("./data", exist_ok=True)
-    file_path = f"./data/{file.filename}"
     
+    # Sanitize filename to prevent path traversal
+    safe_filename = "".join(c for c in file.filename if c.isalnum() or c in '._-')
+    if not safe_filename.endswith('.pdf'):
+        safe_filename += '.pdf'
+    file_path = f"./data/{safe_filename}"
+    
+    content = await file.read()
     with open(file_path, "wb") as f:
-        content = await file.read()
         f.write(content)
     
     try:
@@ -409,14 +482,19 @@ async def upload_image(file: UploadFile = File(...)):
         f.write(content)
     
     try:
-        from image_captioner import ImageCaptioner
-        captioner = ImageCaptioner()
-        caption = captioner.caption_image(file_path)
+        if image_captioner is None:
+            raise HTTPException(status_code=500, detail="Image captioner not available. Server may still be loading.")
+        caption = image_captioner.caption_image(file_path)
         
-        text_with_caption = f"Image: {file.filename}\nCaption: {caption}"
+        text_with_caption = (
+            f"[Uploaded Image] File: {file.filename}\n"
+            f"Type: image photo picture\n"
+            f"Caption: {caption}\n"
+            f"Description: This image shows {caption}. "
+            f"The uploaded photo contains visual content described as: {caption}."
+        )
         
-        import hashlib
-        file_hash = hashlib.md5(content).hexdigest()[:8]
+        file_hash = hashlib.sha256(content).hexdigest()[:8]
         
         metadata = {
             "source": file_path,
@@ -461,17 +539,21 @@ async def upload_audio(file: UploadFile = File(...)):
         f.write(content)
     
     try:
-        from voice_transcriber import VoiceTranscriber
-        transcriber = VoiceTranscriber(model_size="tiny")
-        transcription = transcriber.transcribe(file_path)
+        if voice_transcriber is None:
+            raise HTTPException(status_code=500, detail="Voice transcriber not available. Server may still be loading.")
+        transcription = voice_transcriber.transcribe(file_path)
         
         if transcription.startswith("Error"):
             raise HTTPException(status_code=500, detail=transcription)
         
-        text_with_transcription = f"Audio: {file.filename}\nTranscription: {transcription}"
+        text_with_transcription = (
+            f"[Uploaded Audio] File: {file.filename}\n"
+            f"Type: audio voice sound recording\n"
+            f"Transcription: {transcription}\n"
+            f"Content: The audio recording says: {transcription}"
+        )
         
-        import hashlib
-        file_hash = hashlib.md5(content).hexdigest()[:8]
+        file_hash = hashlib.sha256(content).hexdigest()[:8]
         
         metadata = {
             "source": file_path,
@@ -513,6 +595,10 @@ async def clear_kb():
         
         global processor
         processor = DocumentProcessor(vector_store, chunk_size=800, chunk_overlap=160)
+        
+        # CRITICAL: Update orchestrator's vector store reference
+        if orchestrator:
+            orchestrator.update_vector_store(vector_store)
         
         # Clear all cache entries when KB is cleared
         cache.clear_all()
@@ -632,9 +718,13 @@ async def get_documents_graph():
     except Exception as e:
         return {"tree": {"name": "Error", "children": []}, "error": str(e)}
 
+class CreateSessionRequest(BaseModel):
+    title: Optional[str] = None
+
 @app.post("/api/sessions")
-async def create_session(title: str = None):
+async def create_session(request: CreateSessionRequest = None):
     """Create a new chat session"""
+    title = request.title if request else None
     if not SESSION_SUPPORT:
         return {"id": f"temp_{id(title)}", "title": title or "New Chat", "message": "Session support not available"}
     try:
@@ -713,6 +803,7 @@ async def favicon():
     return {"status": "no favicon"}
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+# SECURITY: /data directory no longer served as static files to prevent unauthorized access to uploads
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

@@ -159,6 +159,8 @@ class RetrievalAgent(BaseAgent):
             "retrieved_docs": results['documents'],
             "retrieved_metadata": retrieved_metadata,
             "retrieved_ids": results['ids'],
+            "num_results": len(results['documents']),
+            "distances": results.get('distances', []),
             "search_query": search_query
         }
 

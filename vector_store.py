@@ -50,7 +50,7 @@ class VectorStore:
     
     def _init_empty(self):
         """Initialize empty vector store"""
-        self.index = faiss.IndexFlatL2(self.dimension)
+        self.index = faiss.IndexFlatIP(self.dimension)
         self.documents = []
         self.metadatas = []
         self.ids = []
@@ -79,15 +79,21 @@ class VectorStore:
     
     def _rebuild_index(self):
         """Rebuild FAISS index from documents"""
-        self.index = faiss.IndexFlatL2(self.dimension)
+        self.index = faiss.IndexFlatIP(self.dimension)
         if self.documents:
             embeddings = np.array([self._generate_embedding(doc) for doc in self.documents])
+            faiss.normalize_L2(embeddings)
             self.index.add(embeddings)
             self._save()
     
     def _generate_embedding(self, text: str) -> np.ndarray:
         embedding = self.embedding_model.encode(text, convert_to_numpy=True)
         return embedding.astype('float32')
+    
+    def _normalize_embeddings(self, embeddings: np.ndarray) -> np.ndarray:
+        """Normalize embeddings for cosine similarity with IndexFlatIP"""
+        faiss.normalize_L2(embeddings)
+        return embeddings
     
     def add_documents(self, texts: List[str], metadatas: List[Dict[str, Any]], ids: List[str]):
         with self._lock:
@@ -109,6 +115,7 @@ class VectorStore:
                 return
             
             embeddings = np.array([self._generate_embedding(text) for text in new_texts])
+            faiss.normalize_L2(embeddings)
             
             self.index.add(embeddings)
             self.documents.extend(new_texts)
@@ -127,6 +134,7 @@ class VectorStore:
             }
         
         query_embedding = self._generate_embedding(query).reshape(1, -1)
+        faiss.normalize_L2(query_embedding)
         
         k = min(k, len(self.documents))
         distances, indices = self.index.search(query_embedding, k)
@@ -157,7 +165,7 @@ class VectorStore:
             os.remove(self.index_path)
         if os.path.exists(self.metadata_path):
             os.remove(self.metadata_path)
-        self.index = faiss.IndexFlatL2(self.dimension)
+        self.index = faiss.IndexFlatIP(self.dimension)
         self.documents = []
         self.metadatas = []
         self.ids = []

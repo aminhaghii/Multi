@@ -94,6 +94,11 @@ class HybridRetrievalAgent:
             # 5. Select top k
             final_results = merged_results[:k]
             
+            # Fallback: if merge returned nothing but vector store has docs, use raw vector results
+            if not final_results and vector_results:
+                logger.info("⚠️ Hybrid merge returned 0 results, falling back to raw vector search")
+                final_results = vector_results[:k]
+            
             # 6. Build response
             return self._build_response(final_results, query)
             
@@ -131,7 +136,9 @@ class HybridRetrievalAgent:
         return results
     
     def _keyword_search(self, query: str, k: int) -> List[SearchResult]:
-        """Keyword-based exact match search"""
+        """Keyword-based exact match search using heap for top-k efficiency"""
+        import heapq
+        
         results = []
         
         # Extract keywords
@@ -148,19 +155,23 @@ class HybridRetrievalAgent:
             logger.warning("No documents in vector store for keyword search")
             return results
         
-        # Score each document
-        scored_docs = []
+        # Use a min-heap of size k to avoid full sort — O(n log k) instead of O(n log n)
+        top_k_heap = []  # (score, index, doc, meta)
+        
         for i, (doc, meta) in enumerate(zip(all_docs, all_metas)):
             score = self._calculate_keyword_score(doc, keywords)
             
             if score >= self.min_keyword_score:
-                scored_docs.append((i, doc, meta or {}, score))
+                if len(top_k_heap) < k:
+                    heapq.heappush(top_k_heap, (score, i, doc, meta or {}))
+                elif score > top_k_heap[0][0]:
+                    heapq.heapreplace(top_k_heap, (score, i, doc, meta or {}))
         
-        # Sort by score
-        scored_docs.sort(key=lambda x: x[3], reverse=True)
+        # Extract results sorted by score descending
+        scored_docs = sorted(top_k_heap, key=lambda x: x[0], reverse=True)
         
         # Convert to SearchResult
-        for i, (idx, doc, meta, score) in enumerate(scored_docs[:k]):
+        for score, idx, doc, meta in scored_docs:
             results.append(SearchResult(
                 document=doc,
                 metadata=meta,
@@ -247,6 +258,18 @@ class HybridRetrievalAgent:
         
         # Filter stop words and short words
         keywords = [w for w in words if w not in stop_words and len(w) > 2]
+        
+        # Content-type keywords that must NEVER be filtered out
+        content_keywords = {
+            'image', 'photo', 'picture', 'caption', 'diagram', 'figure',
+            'audio', 'voice', 'sound', 'transcription', 'recording',
+            'see', 'hear', 'show', 'describe', 'content', 'upload',
+            'document', 'pdf', 'file', 'text', 'board', 'whiteboard',
+            'equation', 'formula', 'chart', 'table', 'graph'
+        }
+        for w in words:
+            if w in content_keywords and w not in keywords:
+                keywords.append(w)
         
         # Add technical multi-word terms
         for term in self.technical_terms:
@@ -373,17 +396,17 @@ class HybridRetrievalAgent:
         }
     
     def _empty_result(self, reason: str) -> Dict[str, Any]:
-        """Return empty result structure"""
+        """Return empty result structure - success:True with 0 results (not an error)"""
         return {
-            "success": False,
+            "success": True,
             "documents": [],
             "metadatas": [],
-            "retrieved_docs": [],  # For ReasoningAgent
-            "retrieved_metadata": [],  # For ReasoningAgent
+            "retrieved_docs": [],
+            "retrieved_metadata": [],
             "scores": [],
             "distances": [],
             "sources": [],
             "num_results": 0,
             "retrieval_method": "hybrid",
-            "error": reason
+            "info": reason
         }

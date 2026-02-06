@@ -1,4 +1,3 @@
-import sys
 import os
 import requests
 import json
@@ -6,21 +5,28 @@ import time
 import asyncio  # BUG-013 FIX: For async operations
 from pathlib import Path
 
-# Add current directory to path
-sys.path.insert(0, '.')
-
 class LLMClient:
     """LLM Client for Llama-3 GGUF model"""
     
-    def __init__(self, base_url: str = "http://127.0.0.1:8080", multimodal_base_url: str = "http://127.0.0.1:8001"):
+    def __init__(self, base_url: str = "http://127.0.0.1:8080", multimodal_base_url: str = "http://127.0.0.1:8082"):
         self.base_url = base_url
         self.multimodal_base_url = multimodal_base_url
         self.model = None
         self._try_load_direct_model()
     
     def _try_load_direct_model(self):
-        """Try to load Llama-3 model directly"""
-        model_path = "./models/llama3/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf"
+        """Try to load model directly from local GGUF file"""
+        # Check environment variable first, then common paths
+        model_path = os.environ.get("GGUF_MODEL_PATH", "")
+        if not model_path or not Path(model_path).exists():
+            candidate_paths = [
+                "./models/mimo-vl/MiMo-VL-7B-RL-2508.Q4_K_M.gguf",
+                "./models/llama3/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf",
+            ]
+            for candidate in candidate_paths:
+                if Path(candidate).exists():
+                    model_path = candidate
+                    break
         
         if Path(model_path).exists():
             try:

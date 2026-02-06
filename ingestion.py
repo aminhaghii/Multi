@@ -52,13 +52,27 @@ class DocumentProcessor:
         return safe
 
     def _chunk_text(self, text: str) -> List[str]:
-        words = text.split()
+        # Character-based chunking with word boundary awareness
+        # chunk_size and chunk_overlap are now treated as character counts
         chunks = []
+        start = 0
+        text_len = len(text)
         
-        for i in range(0, len(words), self.chunk_size - self.chunk_overlap):
-            chunk = ' '.join(words[i:i + self.chunk_size])
-            if chunk.strip():
+        while start < text_len:
+            end = start + self.chunk_size
+            if end < text_len:
+                # Try to break at a word boundary (space, newline)
+                boundary = text.rfind(' ', start + self.chunk_size // 2, end)
+                if boundary != -1:
+                    end = boundary
+            else:
+                end = text_len
+            
+            chunk = text[start:end].strip()
+            if chunk:
                 chunks.append(chunk)
+            
+            start = end - self.chunk_overlap if end < text_len else text_len
         
         return chunks
     
@@ -188,7 +202,7 @@ class DocumentProcessor:
         filename_base = self._sanitize_filename(filename)
         
         with open(pdf_path, 'rb') as f:
-            file_hash = hashlib.md5(f.read()).hexdigest()[:8]
+            file_hash = hashlib.sha256(f.read()).hexdigest()[:8]
         
         # Use PyMuPDF for processing
         doc = fitz.open(pdf_path)
@@ -463,7 +477,7 @@ This is an image/figure that can be displayed with markdown."""
     def _generate_file_hash(self, file_path: str) -> str:
         """Generate hash for any file"""
         with open(file_path, 'rb') as f:
-            return hashlib.md5(f.read()).hexdigest()[:8]
+            return hashlib.sha256(f.read()).hexdigest()[:8]
     
     def process_directory(self, directory_path: str):
         supported_extensions = ['.pdf', '.docx', '.doc', '.md', '.txt', '.rtf']

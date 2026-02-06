@@ -6,7 +6,7 @@
     <title>Agentic Research Assistant</title>
     <link rel="stylesheet" href="/static/tailwind.min.css">
     <link rel="stylesheet" href="/static/fontawesome.min.css">
-    <script src="/static/d3.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
     <style>
         :root {
             --primary: #1a365d;
@@ -26,6 +26,12 @@
             position: relative;
             padding-right: 2.5rem;
             transition: all 0.2s ease;
+            max-width: 100%;
+            overflow: hidden;
+        }
+        .session-card > div {
+            max-width: 100%;
+            overflow: hidden;
         }
         .session-card:hover { 
             background: #f1f5f9;
@@ -69,12 +75,6 @@
             background: rgba(255, 255, 255, 0.95);
             backdrop-filter: blur(10px);
             border-right: 1px solid #e2e8f0;
-        }
-        @media (min-width: 1024px) {
-            #sidebar {
-                transform: translateX(0) !important;
-                position: relative !important;
-            }
         }
         #session-bar {
             background: linear-gradient(90deg, #ffffff 0%, #f8fafc 100%);
@@ -204,6 +204,32 @@
         .workspace-menu {
             box-shadow: 0 20px 45px rgba(15, 23, 42, 0.18);
         }
+        /* Sidebar fixed width enforcement */
+        #sidebar {
+            min-width: 16rem;
+            max-width: 16rem;
+            width: 16rem;
+        }
+        #sidebar .session-card,
+        #sidebar .session-card div {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 100%;
+        }
+        /* Mobile sidebar handling */
+        @media (max-width: 1023px) {
+            #sidebar {
+                position: fixed;
+                left: 0;
+                top: 4rem;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+            }
+            #sidebar.open {
+                transform: translateX(0);
+            }
+        }
     </style>
 </head>
 <body class="bg-slate-50 h-screen flex flex-col">
@@ -213,10 +239,7 @@
             <button id="toggle-sidebar" class="p-2 hover:bg-slate-100 rounded-lg lg:hidden">
                 <i class="fas fa-bars text-slate-600"></i>
             </button>
-            <div class="flex items-center gap-2">
-                </div>
-                <span class="font-semibold text-slate-800">Research Assistant</span>
-            </div>
+            <span class="font-semibold text-slate-800">Research Assistant</span>
         </div>
         <div class="flex-1 max-w-xl mx-4">
             <div class="relative">
@@ -245,7 +268,7 @@
 
     <div class="flex-1 flex overflow-hidden">
         <!-- Left Sidebar - History -->
-        <aside id="sidebar" class="sidebar-glass w-72 bg-white border-r border-slate-200 flex flex-col shrink-0 transition-transform lg:translate-x-0 -translate-x-full fixed lg:relative h-[calc(100vh-4rem)] z-20 shadow-soft">
+        <aside id="sidebar" class="sidebar-glass w-64 bg-white border-r border-slate-200 flex flex-col shrink-0 h-[calc(100vh-4rem)] z-20 shadow-soft overflow-hidden">
             <!-- New Chat Button -->
             <div class="p-4 border-b border-slate-200">
                 <button id="new-chat-btn" onclick="createNewSession()" 
@@ -268,7 +291,7 @@
             </div>
 
             <!-- Sidebar Footer with RAG Management -->
-            <div class="p-3 border-t border-slate-200 space-y-2">
+            <div class="p-3 border-t border-slate-200 space-y-1 shrink-0">
                 <button onclick="showUploadModal()" class="w-full py-2 px-3 text-left text-sm text-slate-600 hover:bg-slate-100 rounded-lg flex items-center gap-2">
                     <i class="fas fa-upload text-blue-500"></i>
                     Upload Files
@@ -286,9 +309,9 @@
                     <i class="fas fa-download text-green-500"></i>
                     Export Chat
                 </button>
-                <button onclick="clearKB()" class="w-full py-2 px-3 text-left text-sm text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2">
-                    <i class="fas fa-trash text-red-500"></i>
-                    Clear All Docs
+                <button onclick="clearKB()" class="w-full py-2 px-3 text-left text-sm text-red-600 hover:bg-red-50 rounded-lg flex items-center justify-center gap-2" title="Clear All Documents">
+                    <i class="fas fa-trash-alt text-red-500"></i>
+                    <span class="text-xs">Clear All</span>
                 </button>
             </div>
         </aside>
@@ -300,7 +323,11 @@
                 <span id="session-title" class="font-medium text-slate-700">New Conversation</span>
                 <span id="session-meta" class="ml-3 text-xs text-slate-400"></span>
                 <div class="ml-auto flex items-center gap-2">
-                    <button onclick="toggleAgentSpace()" class="p-2 hover:bg-slate-100 rounded-lg text-slate-500" title="Agent Space">
+                    <button onclick="clearCurrentChat()" class="p-2 hover:bg-red-50 rounded-lg text-slate-500 hover:text-red-500" title="Clear Chat">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                    <button onclick="showExportOptions()" class="p-2 hover:bg-slate-100 rounded-lg text-slate-500" title="Export Chat">
+                        <i class="fas fa-download"></i>
                     </button>
                 </div>
             </div>
@@ -408,7 +435,7 @@
                     <i class="fas fa-times text-xl"></i>
                 </button>
             </div>
-            <div id="mindmap-container" class="flex-1 overflow-hidden bg-slate-50"></div>
+            <div id="mindmap-container" class="flex-1 overflow-auto bg-slate-50"></div>
         </div>
     </div>
 
@@ -449,6 +476,47 @@
     </div>
 
     <script>
+        // UI-013 FIX: Global error boundary to prevent white screens
+        window.addEventListener('error', (event) => {
+            console.error('Global error caught:', event.error);
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'fixed top-4 right-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded shadow-lg z-50';
+            errorDiv.innerHTML = `
+                <div class="flex items-center">
+                    <i class="fas fa-exclamation-triangle mr-2"></i>
+                    <div>
+                        <strong>Error:</strong> ${event.error?.message || 'An unexpected error occurred'}
+                        <button onclick="this.parentElement.parentElement.parentElement.remove()" class="ml-4 text-red-900 hover:text-red-700">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(errorDiv);
+            setTimeout(() => errorDiv.remove(), 5000);
+            event.preventDefault();
+        });
+
+        window.addEventListener('unhandledrejection', (event) => {
+            console.error('Unhandled promise rejection:', event.reason);
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'fixed top-4 right-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded shadow-lg z-50';
+            errorDiv.innerHTML = `
+                <div class="flex items-center">
+                    <i class="fas fa-exclamation-triangle mr-2"></i>
+                    <div>
+                        <strong>Network Error:</strong> ${event.reason?.message || 'Request failed'}
+                        <button onclick="this.parentElement.parentElement.parentElement.remove()" class="ml-4 text-red-900 hover:text-red-700">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(errorDiv);
+            setTimeout(() => errorDiv.remove(), 5000);
+            event.preventDefault();
+        });
+
         let currentSessionId = null;
         let chatHistory = [];
         let sessions = [];
@@ -460,12 +528,114 @@
             { id: 'analysis', name: 'Analysis Lab' }
         ];
 
+        function ensureSidebarPosition() {
+            const sidebar = document.getElementById('sidebar');
+            if (!sidebar) return;
+            if (window.innerWidth >= 1024) {
+                // Desktop: sidebar is always visible via normal flow
+                sidebar.classList.remove('open');
+            } else {
+                // Mobile: sidebar is hidden by CSS transform, only show if 'open'
+                // Do nothing here - let toggleSidebar manage the 'open' class
+            }
+        }
+
+        function toggleSidebar(forceClose = false) {
+            const sidebar = document.getElementById('sidebar');
+            if (!sidebar) return;
+            if (window.innerWidth >= 1024) return;
+
+            const isOpen = sidebar.classList.contains('open');
+            if (forceClose || isOpen) {
+                sidebar.classList.remove('open');
+            } else {
+                sidebar.classList.add('open');
+            }
+        }
+
         async function init() {
             await loadSessions();
             await checkLLMStatus();
             await fetchStats();
             renderWorkspaces();
             setUploadType('document');
+            ensureSidebarPosition();
+            
+            // Sidebar toggle for mobile
+            const toggleBtn = document.getElementById('toggle-sidebar');
+            if (toggleBtn) {
+                toggleBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    toggleSidebar();
+                });
+            }
+
+            document.addEventListener('click', (event) => {
+                const sidebar = document.getElementById('sidebar');
+                if (!sidebar || window.innerWidth >= 1024) return;
+                const button = document.getElementById('toggle-sidebar');
+                if (!sidebar.contains(event.target) && !button.contains(event.target)) {
+                    toggleSidebar(true);
+                }
+            });
+
+            window.addEventListener('resize', ensureSidebarPosition);
+            
+            // UI-003 FIX: Add search functionality
+            const searchInput = document.getElementById('global-search');
+            if (searchInput) {
+                searchInput.addEventListener('input', (e) => {
+                    const query = e.target.value.toLowerCase().trim();
+                    filterSessions(query);
+                });
+            }
+        }
+        
+        // UI-003 FIX: Filter sessions based on search query
+        function filterSessions(query) {
+            if (!query) {
+                renderSessions();
+                return;
+            }
+            
+            const filtered = sessions.filter(s => {
+                const title = (s.title || '').toLowerCase();
+                const preview = (s.last_message_preview || '').toLowerCase();
+                return title.includes(query) || preview.includes(query);
+            });
+            
+            const today = new Date().toDateString();
+            const todayContainer = document.getElementById('sessions-today');
+            const prevContainer = document.getElementById('sessions-previous');
+            
+            todayContainer.innerHTML = '';
+            prevContainer.innerHTML = '';
+            
+            if (!filtered.length) {
+                todayContainer.innerHTML = '<p class="text-sm text-slate-400 py-2">No matching conversations</p>';
+                return;
+            }
+            
+            filtered.forEach(session => {
+                const sessionDate = new Date(session.created_at).toDateString();
+                const isToday = sessionDate === today;
+                const container = isToday ? todayContainer : prevContainer;
+                
+                const card = document.createElement('div');
+                card.className = `session-card p-3 rounded-lg cursor-pointer ${session.id === currentSessionId ? 'active' : ''}`;
+                card.onclick = () => loadSession(session.id);
+                
+                card.innerHTML = `
+                    <div class="font-medium text-sm text-slate-700 truncate">${session.title || 'Untitled'}</div>
+                    <div class="text-xs text-slate-400 mt-1 truncate">${session.last_message_preview || 'No messages'}</div>
+                    <div class="text-xs text-slate-400 mt-1">${formatTime(session.updated_at)}</div>
+                    <button class="session-delete-btn" onclick="event.stopPropagation(); deleteSession('${session.id}')" title="Delete chat">
+                        <i class="fas fa-trash-alt text-xs"></i>
+                    </button>
+                `;
+                
+                container.appendChild(card);
+            });
         }
 
         function renderWorkspaces() {
@@ -658,6 +828,21 @@
             } catch (e) {
                 console.error('Failed to load session:', e);
             }
+        }
+
+        function clearCurrentChat() {
+            if (!confirm('Are you sure you want to clear all messages in this chat?')) return;
+            
+            chatHistory = [];
+            const container = document.getElementById('messages');
+            container.innerHTML = `
+                <div id="empty-state" class="empty-state-modern flex flex-col items-center justify-center h-full">
+                    <i class="fas fa-comments empty-state-icon"></i>
+                    <p class="text-lg font-medium">Start a conversation</p>
+                    <p class="text-sm">Upload documents and ask questions about them</p>
+                </div>
+            `;
+            document.getElementById('session-meta').textContent = '0 messages';
         }
 
         function handleKeyDown(event) {
@@ -980,8 +1165,12 @@
         // BUG-012 FIX: Sanitize image paths to prevent XSS attacks
         function sanitizeImagePath(path) {
             if (!path) return '';
-            // Only allow paths that start with /static/ (trusted paths)
-            if (!path.startsWith('/static/') && !path.startsWith('./static/')) {
+            // Normalize ./data/ paths to /data/ for serving
+            if (path.startsWith('./data/')) {
+                path = path.replace('./data/', '/data/');
+            }
+            // Allow trusted paths: /static/, /data/ (uploaded files)
+            if (!path.startsWith('/static/') && !path.startsWith('./static/') && !path.startsWith('/data/')) {
                 console.warn('[XSS Prevention] Blocked untrusted image path:', path);
                 return '/static/images/placeholder.png';
             }
@@ -1108,47 +1297,33 @@
             const container = document.getElementById('mindmap-container');
             container.innerHTML = '';
             
-            const width = container.clientWidth;
-            const height = container.clientHeight;
-            const margin = {top: 20, right: 120, bottom: 20, left: 120};
+            const root = d3.hierarchy(tree);
+            const containerW = container.clientWidth || 800;
+            const containerH = container.clientHeight || 600;
             
             const svg = d3.select('#mindmap-container')
                 .append('svg')
-                .attr('width', width)
-                .attr('height', height);
+                .attr('width', containerW)
+                .attr('height', containerH);
             
-            const g = svg.append('g')
-                .attr('transform', `translate(${margin.left},${margin.top})`);
-            
-            svg.call(d3.zoom()
-                .scaleExtent([0.3, 2])
-                .on('zoom', (event) => {
-                    g.attr('transform', event.transform);
-                }));
+            const g = svg.append('g');
             
             const treeLayout = d3.tree()
-                .size([height - margin.top - margin.bottom, width - margin.left - margin.right]);
+                .size([containerH - 60, containerW - 300]);
             
-            const root = d3.hierarchy(tree);
-            const treeData = treeLayout(root);
-            const nodes = treeData.descendants();
-            const links = treeData.links();
+            treeLayout(root);
+            const nodes = root.descendants();
+            const links = root.links();
             
-            nodes.forEach(d => d.y = d.depth * 200);
+            nodes.forEach(d => d.y = d.depth * 220 + 30);
             
-            const link = g.selectAll('.link')
+            g.selectAll('.link')
                 .data(links)
                 .enter().append('path')
-                .attr('class', 'link')
-                .attr('d', d => {
-                    return `M ${d.source.y} ${d.source.x}
-                            C ${(d.source.y + d.target.y) / 2} ${d.source.x},
-                              ${(d.source.y + d.target.y) / 2} ${d.target.x},
-                              ${d.target.y} ${d.target.x}`;
-                })
+                .attr('d', d => `M${d.source.y},${d.source.x}C${(d.source.y+d.target.y)/2},${d.source.x} ${(d.source.y+d.target.y)/2},${d.target.x} ${d.target.y},${d.target.x}`)
                 .style('fill', 'none')
                 .style('stroke', '#cbd5e1')
-                .style('stroke-width', '2px');
+                .style('stroke-width', '1.5px');
             
             const node = g.selectAll('.node')
                 .data(nodes)
@@ -1157,7 +1332,7 @@
                 .attr('transform', d => `translate(${d.y},${d.x})`);
             
             node.append('circle')
-                .attr('r', 8)
+                .attr('r', d => d.depth === 0 ? 10 : d.children ? 7 : 5)
                 .style('fill', d => {
                     if (d.data.type === 'root') return '#3b82f6';
                     if (d.data.type === 'pdf') return '#ef4444';
@@ -1172,9 +1347,27 @@
                 .attr('dy', '.35em')
                 .attr('x', d => d.children ? -13 : 13)
                 .attr('text-anchor', d => d.children ? 'end' : 'start')
-                .text(d => d.data.name)
+                .text(d => d.data.name.length > 35 ? d.data.name.substring(0, 35) + '...' : d.data.name)
                 .style('fill', '#1e293b')
                 .style('font-size', '11px');
+            
+            // Auto-fit: zoom to show entire tree within container
+            if (typeof d3.zoom === 'function') {
+                try {
+                    const bounds = g.node().getBBox();
+                    const bw = bounds.width || 1;
+                    const bh = bounds.height || 1;
+                    const scale = Math.min(containerW / (bw + 60), containerH / (bh + 60)) * 0.92;
+                    const tx = (containerW - bw * scale) / 2 - bounds.x * scale;
+                    const ty = (containerH - bh * scale) / 2 - bounds.y * scale;
+                    const t = d3.zoomIdentity.translate(tx, ty).scale(scale);
+                    const zoomBehavior = d3.zoom().scaleExtent([0.1, 4]).on('zoom', (event) => {
+                        g.attr('transform', event.transform);
+                    });
+                    svg.call(zoomBehavior);
+                    svg.call(zoomBehavior.transform, t);
+                } catch(e) { console.warn('Auto-fit failed:', e); }
+            }
         }
 
         // Document Management Functions

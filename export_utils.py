@@ -2,6 +2,7 @@
 Export chat history to PDF, Markdown, or Word formats
 """
 import os
+import html
 from datetime import datetime
 from typing import List, Dict
 from pathlib import Path
@@ -60,7 +61,7 @@ def generate_markdown(chat_history: List[Dict]) -> str:
 
 def generate_html(chat_history: List[Dict]) -> str:
     """Generate HTML report from chat history"""
-    html = f"""<!DOCTYPE html>
+    html_out = f"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
@@ -124,34 +125,37 @@ def generate_html(chat_history: List[Dict]) -> str:
     
     for i, entry in enumerate(chat_history, 1):
         role = entry.get('role', 'user')
-        content = entry.get('content', '').replace('\n', '<br>')
+        # EXPORT-001 FIX: Escape HTML to prevent XSS
+        raw_content = entry.get('content', '')
+        safe_content = html.escape(raw_content)
+        content = safe_content.replace('\n', '<br>')
         metadata = entry.get('metadata', {})
         
         if role == 'user':
-            html += f"""
+            html_out += f"""
     <div class="entry user">
         <h2>Question {i}</h2>
         <p>{content}</p>
     </div>
 """
         elif role == 'assistant':
-            html += f"""
+            html_out += f"""
     <div class="entry assistant">
         <h2>Answer {i}</h2>
         <p>{content}</p>
 """
             if metadata:
-                html += '        <div class="metadata">\n'
+                html_out += '        <div class="metadata">\n'
                 if 'confidence' in metadata:
-                    html += f'            <p><strong>Confidence:</strong> {metadata["confidence"]:.0%}</p>\n'
+                    html_out += f'            <p><strong>Confidence:</strong> {metadata["confidence"]:.0%}</p>\n'
                 if 'verified' in metadata:
                     verified = '✓' if metadata['verified'] else '✗'
-                    html += f'            <p><strong>Verified:</strong> {verified}</p>\n'
+                    html_out += f'            <p><strong>Verified:</strong> {verified}</p>\n'
                 if 'sources' in metadata:
-                    html += f'            <p><strong>Sources:</strong> {metadata["sources"]}</p>\n'
-                html += '        </div>\n'
+                    html_out += f'            <p><strong>Sources:</strong> {metadata["sources"]}</p>\n'
+                html_out += '        </div>\n'
             
-            html += '    </div>\n'
+            html_out += '    </div>\n'
             
             # Collect image paths
             if metadata.get('image_paths'):
@@ -162,27 +166,27 @@ def generate_html(chat_history: List[Dict]) -> str:
     
     # Add images section
     if image_paths:
-        html += """
+        html_out += """
     <div class="images">
         <h1>Related Figures</h1>
 """
         for i, (img_path, source, page) in enumerate(image_paths, 1):
-            html += f"""
+            html_out += f"""
         <div class="image-item">
             <h2>Figure {i}</h2>
             <img src="{img_path}" alt="Figure {i}">
             <p><em>Source: {source} (Page {page})</em></p>
         </div>
 """
-        html += """
+        html_out += """
     </div>
 """
     
-    html += """
+    html_out += """
 </body>
 </html>
 """
-    return html
+    return html_out
 
 
 def save_markdown(chat_history: List[Dict], output_path: str) -> str:
@@ -217,6 +221,12 @@ def export_chat(chat_history: List[Dict], format: str = 'markdown', output_dir: 
     Returns:
         Path to exported file
     """
+    # EXPORT-002 FIX: Prevent path traversal
+    safe_dir = os.path.abspath(output_dir)
+    exports_base = os.path.abspath('./exports')
+    if not safe_dir.startswith(exports_base):
+        raise ValueError("Invalid output directory - path traversal detected")
+    
     os.makedirs(output_dir, exist_ok=True)
     
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

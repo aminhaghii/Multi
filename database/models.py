@@ -233,7 +233,7 @@ class RAGCollection(Base):
             "document_count": self.document_count,
             "chunk_count": self.chunk_count,
             "embedding_model": self.embedding_model,
-            "metadata": self.metadata
+            "metadata": self.extra_data
         }
 
 
@@ -267,5 +267,5 @@ class Document(Base):
             "status": self.status,
             "page_count": self.page_count,
             "chunk_count": self.chunk_count,
-            "metadata": self.metadata
+            "metadata": self.extra_data
         }
