@@ -118,9 +118,9 @@ class HybridRetrievalAgent:
             distances = search_result.get('distances', [])
             
             for i, (doc, meta) in enumerate(zip(documents, metadatas)):
-                # Convert distance to similarity score (0-1)
-                distance = distances[i] if i < len(distances) else 1.0
-                score = 1.0 / (1.0 + distance)  # Inverse distance
+                # IndexFlatIP with normalized vectors returns cosine similarity (0-1, higher=better)
+                score = float(distances[i]) if i < len(distances) else 0.0
+                score = max(0.0, min(1.0, score))  # Clamp to [0, 1]
                 
                 results.append(SearchResult(
                     document=doc,
@@ -147,9 +147,15 @@ class HybridRetrievalAgent:
         if not keywords:
             return results
         
-        # Get all documents from vector store
-        all_docs = getattr(self.vs, 'documents', [])
-        all_metas = getattr(self.vs, 'metadatas', [])
+        # Snapshot under lock to avoid race conditions with concurrent modifications
+        lock = getattr(self.vs, '_lock', None)
+        if lock:
+            with lock:
+                all_docs = list(getattr(self.vs, 'documents', []))
+                all_metas = list(getattr(self.vs, 'metadatas', []))
+        else:
+            all_docs = getattr(self.vs, 'documents', [])
+            all_metas = getattr(self.vs, 'metadatas', [])
         
         if not all_docs:
             logger.warning("No documents in vector store for keyword search")
@@ -195,10 +201,16 @@ class HybridRetrievalAgent:
         
         logger.info(f"🔢 Searching for sections: {sections}")
         
-        # Get all documents with error handling
+        # Snapshot under lock to avoid race conditions
         try:
-            all_docs = getattr(self.vs, 'documents', [])
-            all_metas = getattr(self.vs, 'metadatas', [])
+            lock = getattr(self.vs, '_lock', None)
+            if lock:
+                with lock:
+                    all_docs = list(getattr(self.vs, 'documents', []))
+                    all_metas = list(getattr(self.vs, 'metadatas', []))
+            else:
+                all_docs = getattr(self.vs, 'documents', [])
+                all_metas = getattr(self.vs, 'metadatas', [])
             
             if not all_docs:
                 logger.warning("⚠️ Vector store is empty for section search")

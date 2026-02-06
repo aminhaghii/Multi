@@ -139,14 +139,23 @@ class VectorStore:
         k = min(k, len(self.documents))
         distances, indices = self.index.search(query_embedding, k)
         
-        results_docs = [self.documents[i] for i in indices[0]]
-        results_meta = [self.metadatas[i] for i in indices[0]]
-        results_ids = [self.ids[i] for i in indices[0]]
+        # Filter out invalid indices (-1 returned by FAISS when fewer results than k)
+        results_docs = []
+        results_meta = []
+        results_ids = []
+        results_distances = []
+        
+        for idx, dist in zip(indices[0], distances[0]):
+            if idx >= 0 and idx < len(self.documents):
+                results_docs.append(self.documents[idx])
+                results_meta.append(self.metadatas[idx])
+                results_ids.append(self.ids[idx])
+                results_distances.append(float(dist))
         
         return {
             "documents": results_docs,
             "metadatas": results_meta,
-            "distances": distances[0].tolist(),
+            "distances": results_distances,
             "ids": results_ids
         }
     

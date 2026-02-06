@@ -15,7 +15,6 @@ from typing import List, Optional
 import uvicorn
 import shutil
 import json
-from queue import Queue
 from threading import Thread
 
 from main_engine import Orchestrator
@@ -27,12 +26,13 @@ from export_utils import export_chat
 
 try:
     from core.session_manager import session_manager
-    from history.storage.chat_store import chat_store
+    from database.connection import init_database
+    init_database()  # Ensure DB tables exist before any session operations
     SESSION_SUPPORT = True
-except ImportError:
+except ImportError as e:
+    print(f"Warning: Session support not available: {e}")
     SESSION_SUPPORT = False
     session_manager = None
-    chat_store = None
 
 app = FastAPI(title="Agentic Research Assistant API")
 
@@ -141,19 +141,22 @@ async def detailed_health():
     """Detailed health check with all system components"""
     from datetime import datetime
     
-    # Get vector store stats
+    # Get vector store stats (snapshot under lock)
     try:
+        with vector_store._lock:
+            snap_metas = list(vector_store.metadatas)
+            chunk_count = len(vector_store.documents)
         vs_stats = {
-            "document_count": len(set(m.get('source', '') for m in vector_store.metadatas)) if hasattr(vector_store, 'metadatas') else 0,
-            "chunk_count": len(vector_store.documents) if hasattr(vector_store, 'documents') else 0
+            "document_count": len(set(m.get('source', '') for m in snap_metas)),
+            "chunk_count": chunk_count
         }
-    except:
+    except Exception:
         vs_stats = {"document_count": 0, "chunk_count": 0}
     
     # Get cache stats
     try:
         cache_stats = cache.get_stats()
-    except:
+    except Exception:
         cache_stats = {"total_entries": 0, "reuse_rate": 0}
     
     return {
@@ -293,11 +296,14 @@ async def chat_stream(request: ChatRequest):
         except Exception as e:
             print(f"Warning: Failed to save user message in stream: {e}")
 
-    def event_generator():
-        queue: Queue = Queue()
+    import asyncio
+
+    async def event_generator():
+        loop = asyncio.get_event_loop()
+        async_queue: asyncio.Queue = asyncio.Queue()
         
         def progress_callback(event):
-            queue.put({"type": "progress", "payload": event})
+            loop.call_soon_threadsafe(async_queue.put_nowait, {"type": "progress", "payload": event})
 
         def worker():
             try:
@@ -343,7 +349,7 @@ async def chat_stream(request: ChatRequest):
                         "logs": result.get('execution_log', [])
                     }
 
-                queue.put({"type": "final", "payload": payload})
+                loop.call_soon_threadsafe(async_queue.put_nowait, {"type": "final", "payload": payload})
                 
                 # CHAT PERSISTENCE FIX: Save assistant response to database
                 if SESSION_SUPPORT and request.session_id and result.get('success'):
@@ -362,14 +368,14 @@ async def chat_stream(request: ChatRequest):
                     except Exception as e:
                         print(f"Warning: Failed to save assistant message in stream: {e}")
             except Exception as exc:
-                queue.put({"type": "error", "payload": {"error": str(exc)}})
+                loop.call_soon_threadsafe(async_queue.put_nowait, {"type": "error", "payload": {"error": str(exc)}})
             finally:
-                queue.put({"type": "done"})
+                loop.call_soon_threadsafe(async_queue.put_nowait, {"type": "done"})
 
         Thread(target=worker, daemon=True).start()
 
         while True:
-            event = queue.get()
+            event = await async_queue.get()
             if event["type"] == "done":
                 break
             yield f"data: {json.dumps(event)}\n\n"
@@ -600,6 +606,9 @@ async def clear_kb():
         if orchestrator:
             orchestrator.update_vector_store(vector_store)
         
+        # Update cache's vector store reference for correct KB hash calculations
+        cache.set_vector_store(vector_store)
+        
         # Clear all cache entries when KB is cleared
         cache.clear_all()
         
@@ -610,10 +619,15 @@ async def clear_kb():
 @app.get("/api/documents/list")
 async def get_documents_list():
     try:
+        # Snapshot under lock to avoid race conditions with concurrent uploads/deletes
+        with vector_store._lock:
+            snap_documents = list(vector_store.documents)
+            snap_metadatas = list(vector_store.metadatas)
+        
         docs_map = {}
         total_size = 0
         
-        for idx, metadata in enumerate(vector_store.metadatas):
+        for idx, metadata in enumerate(snap_metadatas):
             source = metadata.get('source', 'unknown')
             file_hash = metadata.get('file_hash', 'unknown')
             images = metadata.get('images', '')
@@ -639,7 +653,8 @@ async def get_documents_list():
             if images:
                 docs_map[source]["images"] += len([x for x in images.split(',') if x.strip()])
             
-            total_size += len(vector_store.documents[idx].encode('utf-8'))
+            if idx < len(snap_documents):
+                total_size += len(snap_documents[idx].encode('utf-8'))
         
         return {
             "documents": list(docs_map.values()),
@@ -667,6 +682,11 @@ async def delete_document(file_hash: str):
 @app.get("/api/documents/graph")
 async def get_documents_graph():
     try:
+        # Snapshot under lock to avoid race conditions
+        with vector_store._lock:
+            snap_documents = list(vector_store.documents)
+            snap_metadatas = list(vector_store.metadatas)
+        
         root = {
             "name": "Knowledge Base",
             "type": "root",
@@ -675,7 +695,7 @@ async def get_documents_graph():
         
         doc_map = {}
         
-        for idx, metadata in enumerate(vector_store.metadatas):
+        for idx, metadata in enumerate(snap_metadatas):
             source = metadata.get('source', 'unknown')
             file_hash = metadata.get('file_hash', 'unknown')
             page = metadata.get('page', 0)
@@ -693,11 +713,12 @@ async def get_documents_graph():
                 }
                 root["children"].append(doc_map[source])
             
+            doc_text = snap_documents[idx] if idx < len(snap_documents) else ""
             chunk_node = {
                 "name": f"Chunk {chunk_idx} (Page {page})",
                 "type": "chunk",
                 "id": f"{file_hash}_chunk_{idx}",
-                "text": vector_store.documents[idx][:100] + "..." if len(vector_store.documents[idx]) > 100 else vector_store.documents[idx],
+                "text": doc_text[:100] + "..." if len(doc_text) > 100 else doc_text,
                 "children": []
             }
             
@@ -739,7 +760,7 @@ async def get_recent_sessions(limit: int = 20):
     if not SESSION_SUPPORT:
         return []
     try:
-        return chat_store.get_recent_sessions(limit=limit)
+        return session_manager.list_sessions(limit=limit)
     except Exception as e:
         return []
 

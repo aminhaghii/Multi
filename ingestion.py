@@ -166,7 +166,9 @@ class DocumentProcessor:
                         img_filename = f"page{page_num+1}_img{img_idx+1}.{image_ext}"
                         img_path = os.path.join(doc_images_dir, img_filename)
 
-                        image.save(img_path, format=image_ext.upper())
+                        # PIL expects 'JPEG' not 'JPG'
+                        pil_format = 'JPEG' if image_ext.lower() in ('jpg', 'jpeg') else image_ext.upper()
+                        image.save(img_path, format=pil_format)
                         width, height = image.size
                         
                         # Web-accessible path

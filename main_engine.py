@@ -193,8 +193,9 @@ class Orchestrator:
             "num_iterations": 0,
             "num_sources": 0,
             "query_type": "casual",
-            "sources": [],
             "image_paths": [],
+            "artifact": None,
+            "from_cache": False,
             "execution_log": [{
                 "step": "casual_query_redirect",
                 "timestamp": time.time(),
@@ -212,9 +213,17 @@ class Orchestrator:
         print("ORCHESTRATOR: Starting query processing")
         print("=" * 70 + "\n")
         
-        self.execution_log = []
+        # Use a local execution log to avoid cross-request contamination in concurrent scenarios
+        execution_log = []
         original_query = user_query
         original_lang = 'en'
+        
+        def log_step_local(step: str, details: Dict[str, Any]):
+            execution_log.append({
+                "step": step,
+                "timestamp": time.time(),
+                "details": details
+            })
         
         def emit(event: Dict[str, Any]):
             if progress_callback:
@@ -236,7 +245,7 @@ class Orchestrator:
         if self._is_non_english(user_query):
             print(f" Detected non-English query: {user_query}")
             user_query, original_lang = self._translate_query(user_query)
-            self.log_step("translation", {
+            log_step_local("translation", {
                 "original_query": original_query,
                 "translated_query": user_query,
                 "original_lang": original_lang
@@ -281,7 +290,7 @@ class Orchestrator:
         print("PHASE 1: Query Understanding")
         print("-" * 70)
         query_result = self.query_agent.execute(context)
-        self.log_step("query_understanding", query_result)
+        log_step_local("query_understanding", query_result)
         emit({
             "type": "phase_text",
             "phase": "query_understanding",
@@ -290,7 +299,7 @@ class Orchestrator:
         emit({"type": "phase_end", "phase": "query_understanding"})
         
         if not query_result['success']:
-            return self._build_error_response("Query understanding failed", query_result)
+            return self._build_error_response("Query understanding failed", query_result, execution_log)
         
         context.update(query_result)
         print(f"Intent: {query_result['intent']}")
@@ -301,7 +310,7 @@ class Orchestrator:
         print("PHASE 2: Knowledge Retrieval")
         print("-" * 70)
         retrieval_result = self.retrieval_agent.execute(context)
-        self.log_step("retrieval", retrieval_result)
+        log_step_local("retrieval", retrieval_result)
         emit({
             "type": "phase_text",
             "phase": "retrieval",
@@ -310,7 +319,7 @@ class Orchestrator:
         emit({"type": "phase_end", "phase": "retrieval"})
         
         if not retrieval_result['success']:
-            return self._build_error_response("Retrieval failed", retrieval_result)
+            return self._build_error_response("Retrieval failed", retrieval_result, execution_log)
         
         context.update(retrieval_result)
         num_results = retrieval_result['num_results']
@@ -325,13 +334,17 @@ class Orchestrator:
                 direct_docs = direct_results.get('documents', [])
                 if direct_docs:
                     print(f"✓ Direct search found {len(direct_docs)} documents")
+                    # Convert cosine similarity scores (higher=better) to distances (lower=better)
+                    # to match the format used by HybridRetrievalAgent
+                    raw_scores = direct_results.get('distances', [])
+                    converted_distances = [1.0 - max(0.0, min(1.0, s)) for s in raw_scores]
                     retrieval_result = {
                         "success": True,
                         "documents": direct_docs,
                         "metadatas": direct_results.get('metadatas', []),
                         "retrieved_docs": direct_docs,
                         "retrieved_metadata": direct_results.get('metadatas', []),
-                        "distances": direct_results.get('distances', []),
+                        "distances": converted_distances,
                         "num_results": len(direct_docs),
                         "retrieval_method": "direct_fallback"
                     }
@@ -355,7 +368,10 @@ class Orchestrator:
                     "num_iterations": 0,
                     "num_sources": 0,
                     "query_type": "specialized_no_docs",
-                    "execution_log": self.execution_log
+                    "image_paths": [],
+                    "artifact": None,
+                    "from_cache": False,
+                    "execution_log": execution_log
                 }
         
         distances = retrieval_result.get('distances', [])
@@ -371,6 +387,7 @@ class Orchestrator:
         iteration = 0
         final_answer = None
         final_confidence = 0.0
+        reasoning_result = None
         
         while iteration < self.max_refinement_iterations:
             iteration += 1
@@ -380,10 +397,10 @@ class Orchestrator:
             print("-" * 70)
             
             reasoning_result = self.reasoning_agent.execute(context)
-            self.log_step(f"reasoning_iter_{iteration}", reasoning_result)
+            log_step_local(f"reasoning_iter_{iteration}", reasoning_result)
             
             if not reasoning_result['success']:
-                return self._build_error_response("Reasoning failed", reasoning_result)
+                return self._build_error_response("Reasoning failed", reasoning_result, execution_log)
             
             answer = reasoning_result['answer']
             for chunk_start in range(0, len(answer), 160):
@@ -406,10 +423,10 @@ class Orchestrator:
             print("-" * 70)
             
             verification_result = self.verification_agent.execute(context)
-            self.log_step(f"verification_iter_{iteration}", verification_result)
+            log_step_local(f"verification_iter_{iteration}", verification_result)
             
             if not verification_result['success']:
-                return self._build_error_response("Verification failed", verification_result)
+                return self._build_error_response("Verification failed", verification_result, execution_log)
             
             confidence = verification_result['confidence']
             verified = verification_result['verified']
@@ -463,7 +480,7 @@ class Orchestrator:
             "verified": final_confidence >= self.confidence_threshold,
             "num_iterations": iteration,
             "num_sources": retrieval_result['num_results'],
-            "execution_log": self.execution_log,
+            "execution_log": execution_log,
             "from_cache": False,
             "image_paths": image_paths,
             "artifact": artifact
@@ -552,12 +569,12 @@ class Orchestrator:
                     html_parts.append(f'<p>{p_html}</p>')
         return '\n'.join(html_parts)
     
-    def _build_error_response(self, message: str, details: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_error_response(self, message: str, details: Dict[str, Any], execution_log=None) -> Dict[str, Any]:
         return {
             "success": False,
             "error": message,
             "details": details,
-            "execution_log": self.execution_log
+            "execution_log": execution_log if execution_log is not None else self.execution_log
         }
     
     def print_result(self, result: Dict[str, Any]):

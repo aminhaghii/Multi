@@ -32,7 +32,11 @@ def generate_markdown(chat_history: List[Dict]) -> str:
             if metadata:
                 md += "**Metadata:**\n"
                 if 'confidence' in metadata:
-                    md += f"- Confidence: {metadata['confidence']:.0%}\n"
+                    try:
+                        conf_val = float(metadata['confidence'])
+                        md += f"- Confidence: {conf_val:.0%}\n"
+                    except (ValueError, TypeError):
+                        md += f"- Confidence: {metadata['confidence']}\n"
                 if 'verified' in metadata:
                     md += f"- Verified: {'✓' if metadata['verified'] else '✗'}\n"
                 if 'sources' in metadata:
@@ -147,7 +151,11 @@ def generate_html(chat_history: List[Dict]) -> str:
             if metadata:
                 html_out += '        <div class="metadata">\n'
                 if 'confidence' in metadata:
-                    html_out += f'            <p><strong>Confidence:</strong> {metadata["confidence"]:.0%}</p>\n'
+                    try:
+                        conf_val = float(metadata['confidence'])
+                        html_out += f'            <p><strong>Confidence:</strong> {conf_val:.0%}</p>\n'
+                    except (ValueError, TypeError):
+                        html_out += f'            <p><strong>Confidence:</strong> {html.escape(str(metadata["confidence"]))}</p>\n'
                 if 'verified' in metadata:
                     verified = '✓' if metadata['verified'] else '✗'
                     html_out += f'            <p><strong>Verified:</strong> {verified}</p>\n'
@@ -171,11 +179,14 @@ def generate_html(chat_history: List[Dict]) -> str:
         <h1>Related Figures</h1>
 """
         for i, (img_path, source, page) in enumerate(image_paths, 1):
+            safe_img_path = html.escape(str(img_path))
+            safe_source = html.escape(str(source))
+            safe_page = html.escape(str(page))
             html_out += f"""
         <div class="image-item">
             <h2>Figure {i}</h2>
-            <img src="{img_path}" alt="Figure {i}">
-            <p><em>Source: {source} (Page {page})</em></p>
+            <img src="{safe_img_path}" alt="Figure {i}">
+            <p><em>Source: {safe_source} (Page {safe_page})</em></p>
         </div>
 """
         html_out += """

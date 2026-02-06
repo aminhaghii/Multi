@@ -138,21 +138,23 @@ class RetrievalAgent(BaseAgent):
             if marker in normalized:
                 return normalized[normalized.index(marker):]
             if normalized.startswith("./static/images/"):
-                return normalized.replace("./static", "")
+                return normalized[1:]  # Strip leading dot: ./static -> /static
             return image_path
         
         retrieved_metadata = []
         for meta in results['metadatas']:
-            if 'images' in meta and isinstance(meta['images'], str):
+            # Copy to avoid mutating the original vector store metadata
+            meta_copy = dict(meta)
+            if 'images' in meta_copy and isinstance(meta_copy['images'], str):
                 normalized_paths = [
                     _normalize_image_path(p.strip())
-                    for p in meta['images'].split(',')
+                    for p in meta_copy['images'].split(',')
                     if p.strip()
                 ]
-                meta['images'] = ",".join(normalized_paths)
-            if meta.get('image_path'):
-                meta['image_path'] = _normalize_image_path(meta['image_path'])
-            retrieved_metadata.append(meta)
+                meta_copy['images'] = ",".join(normalized_paths)
+            if meta_copy.get('image_path'):
+                meta_copy['image_path'] = _normalize_image_path(meta_copy['image_path'])
+            retrieved_metadata.append(meta_copy)
         
         return {
             "success": True,
@@ -438,8 +440,8 @@ Answer:"""
             error = Exception(result.get('error', 'LLM generation failed'))
             self._log_failure(error, {
                 'query': user_query,
-                'context_length': len(context_text) if 'context_text' in dir() else 0,
-                'prompt_length': len(prompt) if 'prompt' in dir() else 0
+                'context_length': len(context_text) if retrieved_docs else 0,
+                'prompt_length': len(prompt)
             })
             
             # Attempt 2: Simplified reasoning
@@ -564,9 +566,11 @@ Issues: [list issues or "None"]"""
                 if line.startswith('Confidence:'):
                     try:
                         conf_str = line.split(':', 1)[1].strip()
-                        confidence = float(conf_str)
+                        # Handle cases like "0.85 (high)" by extracting first float-like token
+                        conf_token = conf_str.split()[0] if conf_str.split() else conf_str
+                        confidence = float(conf_token)
                         confidence = max(0.0, min(1.0, confidence))
-                    except:
+                    except (ValueError, IndexError):
                         pass
                 elif line.startswith('Issues:'):
                     issue_text = line.split(':', 1)[1].strip()

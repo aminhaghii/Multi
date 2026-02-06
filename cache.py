@@ -166,7 +166,16 @@ class ResponseCache:
         if not response_data.get('success', False):
             return
         
+        # Strip execution_log and other non-essential/large fields before caching
+        cacheable_data = {k: v for k, v in response_data.items() if k != 'execution_log'}
+        
         with sqlite3.connect(self.db_path) as conn:
+            try:
+                serialized = json.dumps(cacheable_data, default=str)
+            except (TypeError, ValueError) as e:
+                print(f"⚠️ Cache: Failed to serialize response: {e}")
+                return
+            
             conn.execute("""
                 INSERT OR REPLACE INTO cached_responses 
                 (query_hash, user_query, response_data, kb_hash, ttl_hours)
@@ -174,7 +183,7 @@ class ResponseCache:
             """, (
                 query_hash,
                 user_query,
-                json.dumps(response_data),
+                serialized,
                 kb_hash,
                 ttl_hours
             ))

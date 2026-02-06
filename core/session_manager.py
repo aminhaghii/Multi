@@ -7,9 +7,6 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session as DBSession
 
-import sys
-sys.path.append('..')
-
 from database.models import Session, Message, RAGCollection, SessionStatus, MessageRole, CollectionType
 from database.connection import get_db_session
 

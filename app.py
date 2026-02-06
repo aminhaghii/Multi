@@ -7,7 +7,6 @@ from main_engine import Orchestrator
 from llm_client import LLMClient
 from vector_store import VectorStore
 from ingestion import DocumentProcessor
-from image_captioner import ImageCaptioner
 from pathlib import Path
 
 st.set_page_config(
@@ -34,6 +33,7 @@ def initialize_system():
     processor = DocumentProcessor(vector_store, chunk_size=800, chunk_overlap=160)
     
     try:
+        from image_captioner import ImageCaptioner
         image_captioner = ImageCaptioner()
     except Exception as e:
         print(f"Warning: Could not load image captioner: {e}")

@@ -75,9 +75,11 @@ async def load_model():
 
 @app.get("/health")
 async def health_check():
+    if model is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
     return {
-        "status": "healthy" if model is not None else "model_not_loaded",
-        "model_loaded": model is not None,
+        "status": "healthy",
+        "model_loaded": True,
         "device": device
     }
 
@@ -132,6 +134,12 @@ async def generate_completion(request: GenerationRequest):
 @app.post("/completion", response_model=GenerationResponse)
 async def generate_simple(request: GenerationRequest):
     return await generate_completion(request)
+
+@app.post("/generate")
+async def generate_endpoint(request: GenerationRequest):
+    """Endpoint used by llm_client.generate_with_images()"""
+    result = await generate_completion(request)
+    return {"text": result.content, "model": "MiMo-VL-7B", "success": result.success}
 
 if __name__ == "__main__":
     print("Starting MiMo-VL Multimodal Server on port 8082...")
