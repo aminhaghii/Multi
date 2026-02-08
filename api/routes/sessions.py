@@ -7,9 +7,24 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 
 import sys
-sys.path.insert(0, str(__file__).replace('\\', '/').rsplit('/', 3)[0])
+import re as _re
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from core.session_manager import session_manager
+
+def sanitize_error(e: Exception, generic_msg: str = "An internal error occurred") -> str:
+    """Sanitize exception messages to prevent information leakage."""
+    msg = str(e)
+    msg = _re.sub(r'[A-Za-z]:\\[^\s:]+', '[path]', msg)
+    msg = _re.sub(r'/[^\s:]+/[^\s:]+', '[path]', msg)
+    msg = _re.sub(r'line \d+', 'line [N]', msg)
+    if len(msg) > 200:
+        msg = msg[:200] + '...'
+    sensitive = ['password', 'secret', 'key', 'token', 'credential', 'database']
+    if any(p in msg.lower() for p in sensitive):
+        return generic_msg
+    return msg or generic_msg
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -43,7 +58,7 @@ async def create_session(request: CreateSessionRequest):
         session = session_manager.create_session(title=request.title)
         return session
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 
 @router.get("", response_model=Dict[str, Any])
@@ -67,7 +82,7 @@ async def list_sessions(
             "offset": offset
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 
 @router.get("/recent", response_model=List[Dict[str, Any]])
@@ -76,7 +91,7 @@ async def get_recent_sessions(limit: int = Query(20, ge=1, le=50)):
     try:
         return session_manager.list_sessions(limit=limit)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 
 @router.get("/{session_id}", response_model=Dict[str, Any])
@@ -94,7 +109,7 @@ async def get_session(session_id: str, include_messages: bool = False, limit: in
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 
 @router.patch("/{session_id}", response_model=Dict[str, Any])
@@ -109,7 +124,7 @@ async def update_session(session_id: str, request: UpdateSessionRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 
 @router.delete("/{session_id}")
@@ -123,7 +138,7 @@ async def delete_session(session_id: str, hard_delete: bool = False):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 
 @router.post("/{session_id}/archive")
@@ -137,7 +152,7 @@ async def archive_session(session_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 
 @router.post("/{session_id}/resume")
@@ -151,7 +166,7 @@ async def resume_session(session_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 
 @router.get("/{session_id}/messages", response_model=Dict[str, Any])
@@ -168,7 +183,7 @@ async def get_session_messages(
             "has_more": len(messages) == limit
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 
 @router.get("/{session_id}/summary")
@@ -180,4 +195,4 @@ async def get_session_summary(session_id: str):
             raise HTTPException(status_code=404, detail="Session not found or no messages")
         return {"session_id": session_id, "summary": summary}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))

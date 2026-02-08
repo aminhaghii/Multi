@@ -60,7 +60,9 @@ class CodeValidator:
     @staticmethod
     def check_dangerous_calls(code: str) -> tuple[bool, str]:
         """Check for dangerous function calls"""
-        dangerous = ['eval', 'exec', 'compile', 'open', '__import__', 'globals', 'locals']
+        dangerous = ['eval', 'exec', 'compile', 'open', '__import__', 'globals', 'locals',
+                     'getattr', 'setattr', 'delattr', 'hasattr', 'vars', 'dir',
+                     'breakpoint', 'exit', 'quit', 'input']
         
         try:
             tree = ast.parse(code)
@@ -75,6 +77,12 @@ class CodeValidator:
                 elif isinstance(node.func, ast.Attribute):
                     if node.func.attr in dangerous:
                         return False, f"Dangerous method call: {node.func.attr}"
+            # Block dangerous attribute access (MRO climbing)
+            if isinstance(node, ast.Attribute):
+                if node.attr in ('__subclasses__', '__bases__', '__mro__', '__class__',
+                                 '__globals__', '__builtins__', '__code__', '__func__',
+                                 '__self__', '__dict__', '__module__', '__import__'):
+                    return False, f"Blocked attribute access: {node.attr}"
         
         return True, "OK"
     
@@ -148,9 +156,6 @@ class PythonExecutor:
                 "tuple": tuple,
                 "type": type,
                 "isinstance": isinstance,
-                "hasattr": hasattr,
-                "getattr": getattr,
-                "setattr": setattr,
                 "True": True,
                 "False": False,
                 "None": None,

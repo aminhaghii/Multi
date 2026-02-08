@@ -76,15 +76,20 @@ class SessionManager:
             sessions = query.all()
             return [s.to_dict() for s in sessions]
     
+    # Attributes that are safe to update via the public API
+    _ALLOWED_UPDATE_FIELDS = frozenset({
+        'title', 'status', 'tags', 'summary', 'extra_data', 'is_public'
+    })
+
     def update_session(self, session_id: str, **updates) -> Optional[Dict[str, Any]]:
-        """Update session properties"""
+        """Update session properties (only whitelisted fields)"""
         with get_db_session() as db:
             session = db.query(Session).filter(Session.id == session_id).first()
             if not session:
                 return None
             
             for key, value in updates.items():
-                if hasattr(session, key):
+                if key in self._ALLOWED_UPDATE_FIELDS and hasattr(session, key):
                     setattr(session, key, value)
             
             session.updated_at = datetime.utcnow()

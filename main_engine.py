@@ -54,7 +54,6 @@ class Orchestrator:
         self.reasoning_agent = ReasoningAgent(llm_client, image_captioner)
         self.verification_agent = VerificationAgent(llm_client)
         
-        self.execution_log = []
         self._log_lock = threading.Lock()
         self.cache = get_cache()
     
@@ -68,13 +67,14 @@ class Orchestrator:
         print("🔄 Orchestrator vector store updated")
     
     def log_step(self, step: str, details: Dict[str, Any]):
+        """Legacy log_step - prefer local execution_log in run_query."""
         log_entry = {
             "step": step,
             "timestamp": time.time(),
             "details": details
         }
         with self._log_lock:
-            self.execution_log.append(log_entry)
+            print(f"[Orchestrator] {step}: {list(details.keys())}")
     
     def _is_non_english(self, text: str) -> bool:
         """Detect if text contains non-English characters (Persian, Arabic, etc.)"""
@@ -414,6 +414,10 @@ class Orchestrator:
             log_step_local(f"reasoning_iter_{iteration}", reasoning_result)
             
             if not reasoning_result['success']:
+                # On reasoning failure, use best answer so far if available
+                if final_answer:
+                    print(f"⚠ Reasoning failed on iteration {iteration}, using previous best answer")
+                    break
                 return self._build_error_response("Reasoning failed", reasoning_result, execution_log)
             
             answer = reasoning_result['answer']
@@ -440,7 +444,11 @@ class Orchestrator:
             log_step_local(f"verification_iter_{iteration}", verification_result)
             
             if not verification_result['success']:
-                return self._build_error_response("Verification failed", verification_result, execution_log)
+                # Verification failure is non-fatal: accept the answer with default confidence
+                print(f"⚠ Verification failed on iteration {iteration}, accepting answer with default confidence")
+                final_answer = answer
+                final_confidence = 0.5
+                break
             
             confidence = verification_result['confidence']
             verified = verification_result['verified']
@@ -467,7 +475,10 @@ class Orchestrator:
             
             if iteration < self.max_refinement_iterations:
                 print(f"⚠ Confidence below threshold. Refining... (Iteration {iteration + 1})")
-                context['refinement_request'] = f"Previous answer had issues: {issues}. Please refine."
+                # Propagate previous answer and issues so ReasoningAgent can improve
+                context['previous_answer'] = answer
+                context['verification_issues'] = issues
+                context['refinement_request'] = f"Previous answer had issues: {issues}. Please refine and address these concerns."
         
         print("=" * 70)
         print("ORCHESTRATOR: Query processing complete")
@@ -585,12 +596,12 @@ class Orchestrator:
                     html_parts.append(f'<p>{p_html}</p>')
         return '\n'.join(html_parts)
     
-    def _build_error_response(self, message: str, details: Dict[str, Any], execution_log=None) -> Dict[str, Any]:
+    def _build_error_response(self, message: str, details: Dict[str, Any], execution_log: list = None) -> Dict[str, Any]:
         return {
             "success": False,
             "error": message,
             "details": details,
-            "execution_log": execution_log if execution_log is not None else self.execution_log
+            "execution_log": execution_log or []
         }
     
     def print_result(self, result: Dict[str, Any]):

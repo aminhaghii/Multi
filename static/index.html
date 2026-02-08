@@ -620,21 +620,7 @@
                 const sessionDate = new Date(session.created_at).toDateString();
                 const isToday = sessionDate === today;
                 const container = isToday ? todayContainer : prevContainer;
-                
-                const card = document.createElement('div');
-                card.className = `session-card p-3 rounded-lg cursor-pointer ${session.id === currentSessionId ? 'active' : ''}`;
-                card.onclick = () => loadSession(session.id);
-                
-                card.innerHTML = `
-                    <div class="font-medium text-sm text-slate-700 truncate">${session.title || 'Untitled'}</div>
-                    <div class="text-xs text-slate-400 mt-1 truncate">${session.last_message_preview || 'No messages'}</div>
-                    <div class="text-xs text-slate-400 mt-1">${formatTime(session.updated_at)}</div>
-                    <button class="session-delete-btn" onclick="event.stopPropagation(); deleteSession('${session.id}')" title="Delete chat">
-                        <i class="fas fa-trash-alt text-xs"></i>
-                    </button>
-                `;
-                
-                container.appendChild(card);
+                container.appendChild(createSessionCard(session));
             });
         }
 
@@ -735,22 +721,38 @@
                 const sessionDate = new Date(session.created_at).toDateString();
                 const isToday = sessionDate === today;
                 const container = isToday ? todayContainer : prevContainer;
-                
-                const card = document.createElement('div');
-                card.className = `session-card p-3 rounded-lg cursor-pointer ${session.id === currentSessionId ? 'active' : ''}`;
-                card.onclick = () => loadSession(session.id);
-                
-                card.innerHTML = `
-                    <div class="font-medium text-sm text-slate-700 truncate">${session.title || 'Untitled'}</div>
-                    <div class="text-xs text-slate-400 mt-1 truncate">${session.last_message_preview || 'No messages'}</div>
-                    <div class="text-xs text-slate-400 mt-1">${formatTime(session.updated_at)}</div>
-                    <button class="session-delete-btn" onclick="event.stopPropagation(); deleteSession('${session.id}')" title="Delete chat">
-                        <i class="fas fa-trash-alt text-xs"></i>
-                    </button>
-                `;
-                
-                container.appendChild(card);
+                container.appendChild(createSessionCard(session));
             });
+        }
+
+        function createSessionCard(session) {
+            const card = document.createElement('div');
+            card.className = `session-card p-3 rounded-lg cursor-pointer ${session.id === currentSessionId ? 'active' : ''}`;
+            card.onclick = () => loadSession(session.id);
+
+            const titleDiv = document.createElement('div');
+            titleDiv.className = 'font-medium text-sm text-slate-700 truncate';
+            titleDiv.textContent = session.title || 'Untitled';
+
+            const previewDiv = document.createElement('div');
+            previewDiv.className = 'text-xs text-slate-400 mt-1 truncate';
+            previewDiv.textContent = session.last_message_preview || 'No messages';
+
+            const timeDiv = document.createElement('div');
+            timeDiv.className = 'text-xs text-slate-400 mt-1';
+            timeDiv.textContent = formatTime(session.updated_at);
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'session-delete-btn';
+            deleteBtn.title = 'Delete chat';
+            deleteBtn.innerHTML = '<i class="fas fa-trash-alt text-xs"></i>';
+            deleteBtn.onclick = (e) => { e.stopPropagation(); deleteSession(session.id); };
+
+            card.appendChild(titleDiv);
+            card.appendChild(previewDiv);
+            card.appendChild(timeDiv);
+            card.appendChild(deleteBtn);
+            return card;
         }
 
         function formatTime(timestamp) {
@@ -852,12 +854,15 @@
             }
         }
 
+        const SSE_MAX_RETRIES = 2;
+
         async function sendMessage() {
             const input = document.getElementById('message-input');
             const message = input.value.trim();
             if (!message) return;
 
             input.value = '';
+            autoResize(input);
             
             const emptyState = document.getElementById('empty-state');
             if (emptyState) emptyState.remove();
@@ -867,21 +872,40 @@
 
             const phasePanel = showPhasePanel();
 
-            try {
-                const res = await fetch('/api/chat/stream', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        message: message,
-                        session_id: currentSessionId
-                    })
-                });
+            let lastError = null;
+            for (let attempt = 0; attempt <= SSE_MAX_RETRIES; attempt++) {
+                try {
+                    if (attempt > 0) {
+                        console.warn(`[SSE] Retry attempt ${attempt}/${SSE_MAX_RETRIES}`);
+                        updatePhaseDetail(phasePanel, 'query_understanding', `Reconnecting (attempt ${attempt})...`, false);
+                        await new Promise(r => setTimeout(r, 1000 * attempt));
+                    }
 
-                await handleStreamResponse(res, phasePanel);
-            } catch (e) {
-                markPhaseError(phasePanel, 'Network error');
-                addMessage('assistant', 'Failed to get response: ' + e.message, {error: true});
+                    const res = await fetch('/api/chat/stream', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            message: message,
+                            session_id: currentSessionId
+                        })
+                    });
+
+                    if (!res.ok) {
+                        throw new Error(`Server error: ${res.status}`);
+                    }
+
+                    await handleStreamResponse(res, phasePanel);
+                    return; // Success - exit retry loop
+                } catch (e) {
+                    lastError = e;
+                    console.error(`[SSE] Attempt ${attempt} failed:`, e.message);
+                    if (attempt >= SSE_MAX_RETRIES) break;
+                }
             }
+
+            // All retries exhausted
+            markPhaseError(phasePanel, 'Network error');
+            addMessage('assistant', 'Failed to get response after retries: ' + (lastError?.message || 'Unknown error'), {error: true});
         }
 
         function showPhasePanel() {
@@ -975,8 +999,12 @@
                     lines.forEach(line => {
                         const jsonText = line.replace('data:', '').trim();
                         if (!jsonText) return;
-                        const payload = JSON.parse(jsonText);
-                        handleStreamEvent(payload, phasePanel);
+                        try {
+                            const payload = JSON.parse(jsonText);
+                            handleStreamEvent(payload, phasePanel);
+                        } catch (parseErr) {
+                            console.warn('[SSE] Skipping malformed event:', jsonText.substring(0, 100), parseErr.message);
+                        }
                     });
                 });
             }
@@ -1086,10 +1114,13 @@
                 if (metadata.image_paths && metadata.image_paths.length > 0) {
                     html += `<div class="mt-3 space-y-2">`;
                     metadata.image_paths.forEach(img => {
+                        const safePath = sanitizeImagePath(img.path || '');
+                        const safeSource = escapeHtml(String(img.source || 'Unknown'));
+                        const safePage = escapeHtml(String(img.page || '?'));
                         html += `
                             <div class="bg-slate-50 rounded-lg p-2">
-                                <img src="${img.path}" alt="Figure" class="max-w-full rounded" onerror="this.style.display='none'">
-                                <div class="text-xs text-slate-500 mt-1">Source: ${img.source} (Page ${img.page})</div>
+                                <img src="${safePath}" alt="Figure" class="max-w-full rounded" onerror="this.style.display='none'">
+                                <div class="text-xs text-slate-500 mt-1">Source: ${safeSource} (Page ${safePage})</div>
                             </div>
                         `;
                     });
@@ -1395,20 +1426,32 @@
                 docs.forEach(doc => {
                     const item = document.createElement('div');
                     item.className = 'p-4 hover:bg-slate-100 transition-colors';
-                    item.innerHTML = `
-                        <div class="flex items-center justify-between">
-                            <div class="flex-1">
-                                <div class="font-medium text-slate-800">${doc.name || doc.filename || 'Unknown'}</div>
-                                <div class="text-sm text-slate-500 mt-1">
-                                    ${doc.chunks} chunks • ${((doc.size || 0) / 1024).toFixed(1)} KB
-                                </div>
-                            </div>
-                            <button onclick="deleteDocument('${doc.id || doc.file_hash}')" 
-                                    class="ml-4 px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded">
-                                Delete
-                            </button>
-                        </div>
-                    `;
+
+                    const row = document.createElement('div');
+                    row.className = 'flex items-center justify-between';
+
+                    const info = document.createElement('div');
+                    info.className = 'flex-1';
+
+                    const nameEl = document.createElement('div');
+                    nameEl.className = 'font-medium text-slate-800';
+                    nameEl.textContent = doc.name || doc.filename || 'Unknown';
+
+                    const metaEl = document.createElement('div');
+                    metaEl.className = 'text-sm text-slate-500 mt-1';
+                    metaEl.textContent = `${doc.chunks} chunks \u2022 ${((doc.size || 0) / 1024).toFixed(1)} KB`;
+
+                    info.appendChild(nameEl);
+                    info.appendChild(metaEl);
+
+                    const delBtn = document.createElement('button');
+                    delBtn.className = 'ml-4 px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded';
+                    delBtn.textContent = 'Delete';
+                    delBtn.onclick = () => deleteDocument(doc.id || doc.file_hash);
+
+                    row.appendChild(info);
+                    row.appendChild(delBtn);
+                    item.appendChild(row);
                     listContainer.appendChild(item);
                 });
             } catch (err) {
@@ -1558,7 +1601,14 @@
             } else if (type === 'table') {
                 const div = document.createElement('div');
                 div.className = 'p-4 overflow-auto';
-                div.innerHTML = content;
+                // Sanitize table content: escape HTML then restore safe table tags
+                let safeTable = escapeHtml(content);
+                // Restore only safe table-related tags
+                ['table', 'thead', 'tbody', 'tr', 'th', 'td', 'caption'].forEach(tag => {
+                    safeTable = safeTable.replace(new RegExp(`&lt;${tag}(\\s[^&]*?)?&gt;`, 'gi'), `<${tag}>`);
+                    safeTable = safeTable.replace(new RegExp(`&lt;/${tag}&gt;`, 'gi'), `</${tag}>`);
+                });
+                div.innerHTML = safeTable;
                 container.appendChild(div);
             } else {
                 const div = document.createElement('div');
@@ -1569,7 +1619,9 @@
         }
 
         function renderMarkdown(md) {
-            return md
+            // SECURITY: Escape HTML first, then apply safe markdown transforms
+            let safe = escapeHtml(md);
+            return safe
                 .replace(/^### (.*$)/gm, '<h3 class="text-lg font-bold mt-4 mb-2">$1</h3>')
                 .replace(/^## (.*$)/gm, '<h2 class="text-xl font-bold mt-6 mb-3">$1</h2>')
                 .replace(/^# (.*$)/gm, '<h1 class="text-2xl font-bold mt-8 mb-4">$1</h1>')
@@ -1652,7 +1704,9 @@
         
         // Helper function to format long response as HTML
         function formatLongResponseAsHTML(response) {
-            let html = response
+            // SECURITY: Escape HTML first to prevent XSS, then apply safe markdown transforms
+            let safe = escapeHtml(response);
+            let html = safe
                 // Headers
                 .replace(/^### (.*$)/gim, '<h3>$1</h3>')
                 .replace(/^## (.*$)/gim, '<h2>$1</h2>')

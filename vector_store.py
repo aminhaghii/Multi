@@ -96,35 +96,61 @@ class VectorStore:
         return embeddings
     
     def add_documents(self, texts: List[str], metadatas: List[Dict[str, Any]], ids: List[str]):
+        # Phase 1: Filter duplicates under lock (fast, needs shared state)
         with self._lock:
-            # Filter out duplicates by ID
             existing_ids = set(self.ids)
-            new_texts = []
-            new_metadatas = []
-            new_ids = []
+        
+        new_texts = []
+        new_metadatas = []
+        new_ids = []
+        for text, meta, doc_id in zip(texts, metadatas, ids):
+            if doc_id not in existing_ids:
+                new_texts.append(text)
+                new_metadatas.append(meta)
+                new_ids.append(doc_id)
+                existing_ids.add(doc_id)
+        
+        if not new_texts:
+            print("No new documents to add (all duplicates)")
+            return
+        
+        # Phase 2: Generate embeddings outside lock (CPU-heavy, no shared state)
+        embeddings = np.array([self._generate_embedding(text) for text in new_texts])
+        faiss.normalize_L2(embeddings)
+        
+        # Phase 3: Add to index under lock (mutates shared state)
+        with self._lock:
+            # Re-check for duplicates added by concurrent calls during embedding
+            final_texts = []
+            final_metadatas = []
+            final_ids = []
+            final_embeddings = []
+            current_ids = set(self.ids)
+            for i, doc_id in enumerate(new_ids):
+                if doc_id not in current_ids:
+                    final_texts.append(new_texts[i])
+                    final_metadatas.append(new_metadatas[i])
+                    final_ids.append(doc_id)
+                    final_embeddings.append(embeddings[i])
+                    current_ids.add(doc_id)
             
-            for text, meta, doc_id in zip(texts, metadatas, ids):
-                if doc_id not in existing_ids:
-                    new_texts.append(text)
-                    new_metadatas.append(meta)
-                    new_ids.append(doc_id)
-                    existing_ids.add(doc_id)
-            
-            if not new_texts:
-                print("No new documents to add (all duplicates)")
+            if not final_texts:
+                print("No new documents to add (all duplicates after re-check)")
                 return
             
-            embeddings = np.array([self._generate_embedding(text) for text in new_texts])
-            faiss.normalize_L2(embeddings)
-            
-            self.index.add(embeddings)
-            self.documents.extend(new_texts)
-            self.metadatas.extend(new_metadatas)
-            self.ids.extend(new_ids)
+            final_emb_array = np.array(final_embeddings)
+            self.index.add(final_emb_array)
+            self.documents.extend(final_texts)
+            self.metadatas.extend(final_metadatas)
+            self.ids.extend(final_ids)
             
             self._save()
     
     def search(self, query: str, k: int = 5) -> Dict[str, Any]:
+        # Generate embedding outside the lock (CPU-bound, doesn't need shared state)
+        query_embedding = self._generate_embedding(query).reshape(1, -1)
+        faiss.normalize_L2(query_embedding)
+        
         with self._lock:
             if len(self.documents) == 0:
                 return {
@@ -133,9 +159,6 @@ class VectorStore:
                     "distances": [],
                     "ids": []
                 }
-            
-            query_embedding = self._generate_embedding(query).reshape(1, -1)
-            faiss.normalize_L2(query_embedding)
             
             k = min(k, len(self.documents))
             distances, indices = self.index.search(query_embedding, k)
@@ -153,12 +176,12 @@ class VectorStore:
                     results_ids.append(self.ids[idx])
                     results_distances.append(float(dist))
         
-        return {
-            "documents": results_docs,
-            "metadatas": results_meta,
-            "distances": results_distances,
-            "ids": results_ids
-        }
+            return {
+                "documents": results_docs,
+                "metadatas": results_meta,
+                "distances": results_distances,
+                "ids": results_ids
+            }
     
     def _save(self):
         """Save index and metadata - BUG-011 FIX: Use JSON for safe serialization"""
@@ -185,6 +208,25 @@ class VectorStore:
         with self._lock:
             return len(self.documents)
     
+    def get_stats(self) -> Dict[str, Any]:
+        """Return thread-safe snapshot of vector store statistics."""
+        with self._lock:
+            doc_count = len(set(m.get('source', '') for m in self.metadatas))
+            chunk_count = len(self.documents)
+        return {"document_count": doc_count, "chunk_count": chunk_count}
+    
+<<<<<<< C:/Users/aminh/OneDrive/Desktop/Multi_agent/vector_store.py
+=======
+    def get_snapshot(self) -> Dict[str, list]:
+        """Return a thread-safe shallow copy of documents and metadatas."""
+        with self._lock:
+            return {
+                "documents": list(self.documents),
+                "metadatas": list(self.metadatas),
+                "ids": list(self.ids)
+            }
+    
+>>>>>>> C:/Users/aminh/.windsurf/worktrees/Multi_agent/Multi_agent-7a8feee4/vector_store.py
     def delete_by_file_hash(self, file_hash: str) -> int:
         """Delete documents by file hash efficiently with atomic operation (BUG-008 FIX)"""
         with self._lock:

@@ -8,7 +8,8 @@ from typing import Optional, Dict, Any, List
 from pathlib import Path
 
 import sys
-sys.path.insert(0, str(__file__).replace('\\', '/').rsplit('/', 3)[0])
+from pathlib import Path as _Path
+sys.path.insert(0, str(_Path(__file__).resolve().parent.parent.parent))
 
 from core.capability_registry import CapabilityRegistry
 from agent_space.tools import (
@@ -16,6 +17,16 @@ from agent_space.tools import (
     python_executor, data_analyzer, visualizer
 )
 from config.settings import settings
+import re as _re
+
+def sanitize_error(e, generic_msg='An internal error occurred'):
+    msg = str(e)
+    msg = _re.sub(r'[A-Za-z]:\\[^\s:]+', '[path]', msg)
+    msg = _re.sub(r'/[^\s:]+/[^\s:]+', '[path]', msg)
+    if len(msg) > 200: msg = msg[:200] + '...'
+    sensitive = ['password', 'secret', 'key', 'token', 'credential', 'database']
+    if any(p in msg.lower() for p in sensitive): return generic_msg
+    return msg or generic_msg
 
 router = APIRouter(prefix="/api/agent-space", tags=["agent-space"])
 
@@ -58,7 +69,7 @@ async def get_capabilities():
             "prompt_context": capability_registry.to_prompt_context()
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 
 @router.get("/tools")
@@ -120,7 +131,7 @@ async def execute_python_code(code: str, inputs: Optional[Dict[str, Any]] = None
         result = python_executor.execute(code=code, inputs=inputs)
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 
 @router.post("/execute/analyze")
@@ -130,7 +141,7 @@ async def analyze_data_quick(data_source: str, operations: Optional[List[Dict]] 
         result = data_analyzer.execute(data_source=data_source, operations=operations)
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 
 @router.post("/execute/visualize")
@@ -144,7 +155,7 @@ async def create_visualization_quick(
         result = visualizer.execute(data=data, chart_type=chart_type, options=options)
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 
 @router.get("/workspace")
@@ -160,7 +171,7 @@ async def get_workspace_info():
             "files": result.get("files", [])
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 
 class CheckPermissionRequest(BaseModel):

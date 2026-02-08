@@ -146,17 +146,9 @@ async def health():
 @app.get("/api/health/detailed")
 async def detailed_health():
     """Detailed health check with all system components"""
-    from datetime import datetime
-    
-    # Get vector store stats (snapshot under lock)
+    # Get vector store stats via public API (avoids coupling to _lock)
     try:
-        with vector_store._lock:
-            snap_metas = list(vector_store.metadatas)
-            chunk_count = len(vector_store.documents)
-        vs_stats = {
-            "document_count": len(set(m.get('source', '') for m in snap_metas)),
-            "chunk_count": chunk_count
-        }
+        vs_stats = vector_store.get_stats()
     except Exception:
         vs_stats = {"document_count": 0, "chunk_count": 0}
     
@@ -389,18 +381,32 @@ async def chat_stream(request: ChatRequest):
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+MAX_FILE_SIZE_MB = 50  # Maximum file size in MB
+
+def _sanitize_upload_filename(raw_filename: str) -> str:
+    """Sanitize an uploaded filename: strip path components, allow only safe chars."""
+    # Strip any directory components first (prevents path traversal)
+    base = os.path.basename(raw_filename)
+    # Keep only alphanumeric, dots, hyphens, underscores
+    safe = "".join(c for c in base if c.isalnum() or c in '._-')
+    # Collapse leading dots to prevent hidden files
+    safe = safe.lstrip('.')
+    if not safe:
+        safe = "upload"
+    return safe
+
 @app.post("/api/upload/pdf")
 async def upload_pdf(file: UploadFile = File(...)):
-    if not file.filename.endswith('.pdf'):
+    if not file.filename or not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
     
     os.makedirs("./data", exist_ok=True)
     
     # Sanitize filename to prevent path traversal
-    safe_filename = "".join(c for c in file.filename if c.isalnum() or c in '._-')
-    if not safe_filename.endswith('.pdf'):
+    safe_filename = _sanitize_upload_filename(file.filename)
+    if not safe_filename.lower().endswith('.pdf'):
         safe_filename += '.pdf'
-    file_path = f"./data/{safe_filename}"
+    file_path = os.path.join("./data", safe_filename)
     
     content = await file.read()
     file_size_mb = len(content) / (1024 * 1024)
@@ -421,15 +427,16 @@ async def upload_pdf(file: UploadFile = File(...)):
             "pages": result['num_pages']
         }
     except Exception as e:
+<<<<<<< C:/Users/aminh/OneDrive/Desktop/Multi_agent/api_server.py
         raise HTTPException(status_code=500, detail=str(e))
-
-
-MAX_FILE_SIZE_MB = 50  # Maximum file size in MB
+=======
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
+>>>>>>> C:/Users/aminh/.windsurf/worktrees/Multi_agent/Multi_agent-7a8feee4/api_server.py
 
 @app.post("/api/upload/document")
 async def upload_document(file: UploadFile = File(...)):
     allowed_extensions = ['.pdf', '.docx', '.doc', '.md', '.txt', '.rtf']
-    if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
+    if not file.filename or not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
         raise HTTPException(status_code=400, detail="Unsupported document type")
 
     os.makedirs("./data", exist_ok=True)
@@ -440,15 +447,16 @@ async def upload_document(file: UploadFile = File(...)):
     if file_size_mb > MAX_FILE_SIZE_MB:
         raise HTTPException(status_code=400, detail=f"File too large. Maximum size is {MAX_FILE_SIZE_MB}MB")
     
-    # Sanitize filename
-    safe_filename = "".join(c for c in file.filename if c.isalnum() or c in '._-')
-    file_path = f"./data/{safe_filename}"
+    # Sanitize filename and derive extension from sanitized name
+    safe_filename = _sanitize_upload_filename(file.filename)
+    file_path = os.path.join("./data", safe_filename)
+    # SECURITY: Extract extension from the SANITIZED filename, not the raw upload name
+    ext = os.path.splitext(safe_filename)[1].lower()
 
     with open(file_path, "wb") as f:
         f.write(content)
 
     try:
-        ext = os.path.splitext(file.filename)[1].lower()
         if ext == '.pdf':
             result = processor.process_pdf(file_path)
             message = f"Processed {result['num_chunks']} chunks from {result['num_pages']} pages"
@@ -475,12 +483,12 @@ async def upload_document(file: UploadFile = File(...)):
             "pages": result.get('num_pages', 0)
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 @app.post("/api/upload/image")
 async def upload_image(file: UploadFile = File(...)):
     allowed_extensions = ['.png', '.jpg', '.jpeg']
-    if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
+    if not file.filename or not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
         raise HTTPException(status_code=400, detail="Only PNG, JPG, JPEG files are allowed")
     
     os.makedirs("./data", exist_ok=True)
@@ -492,8 +500,8 @@ async def upload_image(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"File too large. Maximum size is {MAX_FILE_SIZE_MB}MB")
     
     # Sanitize filename
-    safe_filename = "".join(c for c in file.filename if c.isalnum() or c in '._-')
-    file_path = f"./data/{safe_filename}"
+    safe_filename = _sanitize_upload_filename(file.filename)
+    file_path = os.path.join("./data", safe_filename)
     
     with open(file_path, "wb") as f:
         f.write(content)
@@ -535,12 +543,12 @@ async def upload_image(file: UploadFile = File(...)):
             "caption": caption
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 @app.post("/api/upload/audio")
 async def upload_audio(file: UploadFile = File(...)):
     allowed_extensions = ['.wav', '.mp3', '.m4a', '.ogg']
-    if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
+    if not file.filename or not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
         raise HTTPException(status_code=400, detail="Only WAV, MP3, M4A, OGG files are allowed")
     
     os.makedirs("./data", exist_ok=True)
@@ -552,8 +560,8 @@ async def upload_audio(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"File too large. Maximum size is {MAX_FILE_SIZE_MB}MB")
     
     # Sanitize filename
-    safe_filename = "".join(c for c in file.filename if c.isalnum() or c in '._-')
-    file_path = f"./data/{safe_filename}"
+    safe_filename = _sanitize_upload_filename(file.filename)
+    file_path = os.path.join("./data", safe_filename)
     
     with open(file_path, "wb") as f:
         f.write(content)
@@ -597,7 +605,7 @@ async def upload_audio(file: UploadFile = File(...)):
             "transcription": transcription
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 @app.delete("/api/cache/clear")
 async def clear_cache():
@@ -605,7 +613,7 @@ async def clear_cache():
         cache.clear_all()
         return {"success": True, "message": "Cache cleared successfully"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 @app.delete("/api/kb/clear")
 async def clear_kb():
@@ -631,15 +639,15 @@ async def clear_kb():
         
         return {"success": True, "message": "Knowledge base cleared"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 @app.get("/api/documents/list")
 async def get_documents_list():
     try:
-        # Snapshot under lock to avoid race conditions with concurrent uploads/deletes
-        with vector_store._lock:
-            snap_documents = list(vector_store.documents)
-            snap_metadatas = list(vector_store.metadatas)
+        # Snapshot via public API to avoid coupling to _lock
+        snap = vector_store.get_snapshot()
+        snap_documents = snap['documents']
+        snap_metadatas = snap['metadatas']
         
         docs_map = {}
         total_size = 0
@@ -699,10 +707,10 @@ async def delete_document(file_hash: str):
 @app.get("/api/documents/graph")
 async def get_documents_graph():
     try:
-        # Snapshot under lock to avoid race conditions
-        with vector_store._lock:
-            snap_documents = list(vector_store.documents)
-            snap_metadatas = list(vector_store.metadatas)
+        # Snapshot via public API
+        snap = vector_store.get_snapshot()
+        snap_documents = snap['documents']
+        snap_metadatas = snap['metadatas']
         
         root = {
             "name": "Knowledge Base",
@@ -769,7 +777,7 @@ async def create_session(request: CreateSessionRequest = None):
         session = session_manager.create_session(title=title)
         return session
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 @app.get("/api/sessions/recent")
 async def get_recent_sessions(limit: int = 20):
@@ -796,7 +804,7 @@ async def get_session(session_id: str, include_messages: bool = False):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 @app.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: str):
@@ -812,7 +820,7 @@ async def delete_session(session_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 @app.post("/api/export")
 async def export_history(request: ExportRequest):
@@ -830,7 +838,7 @@ async def export_history(request: ExportRequest):
             media_type='application/octet-stream'
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error(e))
 
 @app.get("/")
 async def root():

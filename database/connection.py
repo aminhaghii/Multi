@@ -74,11 +74,15 @@ def get_db_session():
 
 
 def get_db():
-    """FastAPI dependency for database sessions"""
+    """FastAPI dependency for database sessions with auto-commit"""
     SessionFactory = get_session_factory()
     session = SessionFactory()
     try:
         yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 

@@ -498,13 +498,19 @@ This is an image/figure that can be displayed with markdown."""
             return hashlib.sha256(f.read()).hexdigest()[:8]
     
     def process_directory(self, directory_path: str):
+        # SECURITY: Validate the directory exists and resolve to absolute path
+        abs_dir = os.path.realpath(directory_path)
+        if not os.path.isdir(abs_dir):
+            raise ValueError(f"Directory not found: {directory_path}")
+        
         supported_extensions = ['.pdf', '.docx', '.doc', '.md', '.txt', '.rtf']
-        files = [f for f in os.listdir(directory_path)
+        files = [f for f in os.listdir(abs_dir)
                  if any(f.lower().endswith(ext) for ext in supported_extensions)]
 
         results = []
         for file in files:
-            file_path = os.path.join(directory_path, file)
+            # SECURITY: Use only the basename to prevent traversal via crafted filenames
+            file_path = os.path.join(abs_dir, os.path.basename(file))
             ext = os.path.splitext(file)[1].lower()
             try:
                 if ext == '.pdf':

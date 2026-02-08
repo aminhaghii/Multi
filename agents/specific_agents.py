@@ -177,6 +177,7 @@ class ReasoningAgent(BaseAgent):
         self.image_captioner = image_captioner
         self.max_retries = 3
         self.failure_log = []
+        self._max_failure_log_size = 50
     
     def _log_failure(self, error: Exception, context_info: Dict[str, Any]):
         """Log detailed failure information for debugging."""
@@ -190,6 +191,9 @@ class ReasoningAgent(BaseAgent):
             'prompt_length': context_info.get('prompt_length', 0)
         }
         self.failure_log.append(failure_entry)
+        # Cap the log to prevent unbounded memory growth
+        if len(self.failure_log) > self._max_failure_log_size:
+            self.failure_log = self.failure_log[-self._max_failure_log_size:]
         
         # Log to console
         print(f"\n{'='*80}")

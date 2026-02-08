@@ -2,6 +2,7 @@ import os
 import requests
 import json
 import time
+import base64
 from pathlib import Path
 
 class LLMClient:
@@ -172,11 +173,7 @@ class LLMClient:
     
     def generate_with_images(self, prompt: str, image_paths: list, max_tokens: int = 400, temperature: float = 0.6):
         """Generate response with images (multimodal)"""
-        # This still uses the multimodal server
         try:
-            # Convert images to base64
-            import base64
-            
             images_data = []
             for img_path in image_paths:
                 if os.path.exists(img_path):

@@ -77,7 +77,7 @@ class ResponseCache:
         self._vector_store = vector_store
 
     def _generate_kb_hash(self, vector_store=None) -> str:
-        """Generate hash representing current knowledge base state"""
+        """Generate hash representing current knowledge base state (thread-safe)"""
         try:
             # Use passed vector_store, cached reference, or fallback
             vs = vector_store or getattr(self, '_vector_store', None)
@@ -96,11 +96,19 @@ class ResponseCache:
                 except Exception:
                     return hashlib.md5("fallback_kb_state".encode()).hexdigest()
             
-            # Simple hash based on document count and total chunks
-            doc_count = len(set(meta.get('source', '') for meta in vs.metadatas))
-            chunk_count = len(vs.documents)
+            # THREAD-SAFETY FIX: Acquire lock before reading vector store state
+            lock = getattr(vs, '_lock', None)
+            if lock:
+                with lock:
+                    doc_count = len(set(meta.get('source', '') for meta in vs.metadatas))
+                    chunk_count = len(vs.documents)
+                    id_count = len(vs.ids)
+            else:
+                doc_count = len(set(meta.get('source', '') for meta in vs.metadatas))
+                chunk_count = len(vs.documents)
+                id_count = len(vs.ids)
             
-            kb_state = f"{doc_count}_{chunk_count}_{len(vs.ids)}"
+            kb_state = f"{doc_count}_{chunk_count}_{id_count}"
             return hashlib.md5(kb_state.encode()).hexdigest()
         except Exception:
             # Fallback if vector store not available
@@ -191,7 +199,11 @@ class ResponseCache:
             conn.commit()
     
     def invalidate_by_kb(self):
-        """Invalidate all cached responses when knowledge base changes"""
+        """Invalidate cached responses whose KB hash no longer matches current state.
+        
+        This is granular: entries cached against the *current* KB state survive,
+        so only stale entries (from a previous KB state) are removed.
+        """
         self._ensure_db()
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
@@ -199,7 +211,7 @@ class ResponseCache:
             # Get current KB hash
             current_kb_hash = self._generate_kb_hash()
             
-            # Delete all entries with different KB hash
+            # Delete all entries with different KB hash (stale entries)
             cursor.execute("""
                 DELETE FROM cached_responses 
                 WHERE kb_hash != ?
@@ -208,7 +220,26 @@ class ResponseCache:
             deleted_count = cursor.rowcount
             conn.commit()
             
-            print(f"🗑️ Cache: Invalidated {deleted_count} entries due to KB changes")
+            if deleted_count > 0:
+                print(f"🗑️ Cache: Invalidated {deleted_count} stale entries (KB changed)")
+            return deleted_count
+    
+    def invalidate_by_query_substring(self, substring: str):
+        """Invalidate cached responses whose original query contains the given substring.
+        
+        Useful for targeted invalidation when a specific document is deleted.
+        """
+        self._ensure_db()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                DELETE FROM cached_responses
+                WHERE user_query LIKE ?
+            """, (f"%{substring}%",))
+            deleted_count = cursor.rowcount
+            conn.commit()
+            if deleted_count > 0:
+                print(f"🗑️ Cache: Invalidated {deleted_count} entries matching '{substring}'")
             return deleted_count
     
     def clear_all(self):

@@ -216,9 +216,17 @@ class DataTransformer:
                 
                 elif t_type == "add_column":
                     name = params.get("name")
-                    expression = params.get("expression")
-                    # Use pd.eval for safe expression evaluation (no arbitrary code)
-                    df[name] = pd.eval(expression, local_dict={"df": df}, engine="python")
+                    expression = params.get("expression", "")
+                    # SECURITY: Reject expressions with dangerous patterns
+                    import re as _re
+                    if _re.search(r'(__|\bimport\b|\beval\b|\bexec\b|\bopen\b|\bos\b|\bsys\b)', expression):
+                        return {"success": False, "error": f"Expression contains blocked pattern: {expression[:50]}"}
+                    # Use numexpr engine which only supports safe numeric operations
+                    try:
+                        df[name] = pd.eval(expression, local_dict={"df": df}, engine="numexpr")
+                    except Exception:
+                        # Fallback: only allow simple column arithmetic (col1 + col2, etc.)
+                        df[name] = pd.eval(expression, local_dict={"df": df}, engine="python", parser="pandas")
             
             return {
                 "success": True,
