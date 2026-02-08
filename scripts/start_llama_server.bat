@@ -1,10 +1,2 @@
-@echo off
-setlocal
-
-REM Start llama-server from the actual binaries folder (models\)
-pushd "%~dp0..\models"
-start "llama-server" cmd /k ".\llama-server.exe --model .\deepseek\DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf --port 8080 --ctx-size 8000 --host 127.0.0.1"
-popd
-
-endlocal
-
+"C:\Users\aminh\OneDrive\Desktop\Multi_agent\models\llama-server.exe" --model "C:\Users\aminh\OneDrive\Desktop\Multi_agent\models\deepseek\DeepSeek-R1-Distill-Qwen-14B-IQ4_XS.gguf" --port 8080 --host
+ 127.0.0.1 -ngl 40 --no-mmap --main-gpu 0 -c 2048 -b 512 -ub 256 -t 6 -ctk q8_0 -ctv q8_0

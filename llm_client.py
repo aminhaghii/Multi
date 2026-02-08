@@ -18,13 +18,19 @@ class LLMClient:
         # Check environment variable first, then common paths
         model_path = os.environ.get("GGUF_MODEL_PATH", "")
         if not model_path or not Path(model_path).exists():
+            project_root = Path(__file__).resolve().parent
             candidate_paths = [
-                "./models/mimo-vl/MiMo-VL-7B-RL-2508.Q4_K_M.gguf",
-                "./models/llama3/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf",
+                Path("C:/Users/aminh/OneDrive/Desktop/Multi_agent/models/deepseek/DeepSeek-R1-Distill-Qwen-14B-IQ4_XS.gguf"),
+                project_root / "models/deepseek/DeepSeek-R1-Distill-Qwen-14B-IQ4_XS.gguf",
+                Path("C:/Users/aminh/OneDrive/Desktop/Multi_agent/models/deepseek/DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf"),
+                project_root / "models/deepseek/DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
+                project_root / "models/mimo-vl/MiMo-VL-7B-RL-2508.Q4_K_M.gguf",
+                project_root / "models/llama3/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf",
             ]
             for candidate in candidate_paths:
-                if Path(candidate).exists():
-                    model_path = candidate
+                candidate = Path(candidate)
+                if candidate.exists():
+                    model_path = str(candidate)
                     break
         
         if Path(model_path).exists():
@@ -32,15 +38,16 @@ class LLMClient:
                 # Try to import and load llama-cpp-python
                 from llama_cpp import Llama
                 
-                print("Loading Llama-3 model directly...")
+                print(f"Loading model directly: {Path(model_path).name}...")
                 self.model = Llama(
                     model_path=model_path,
-                    n_ctx=8192,
-                    n_gpu_layers=35,
-                    temperature=0.1,
+                    n_ctx=2048,
+                    n_gpu_layers=40,
+                    n_batch=512,
+                    flash_attn=True,
                     verbose=False
                 )
-                print("Llama-3 loaded successfully!")
+                print(f"Model loaded successfully: {Path(model_path).name}")
                 return True
                 
             except ImportError:
@@ -91,7 +98,7 @@ class LLMClient:
                 return {
                     "success": True,
                     "text": answer,
-                    "model": "Llama-3-8B-Instruct (direct)"
+                    "model": "DeepSeek-R1-Distill-Qwen-14B-IQ4_XS (direct)"
                 }
                 
             except Exception as e:

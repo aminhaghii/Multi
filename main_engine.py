@@ -150,6 +150,19 @@ class Orchestrator:
     
     def _detect_query_type(self, user_query: str) -> str:
         """Detect if query is casual/general or requires specialized knowledge from RAG"""
+        # Treat anything that clearly looks like a question as specialized even if it starts with a greeting
+        question_markers = ['?', '؟']
+        question_keywords = [
+            'چی', 'چه', 'چرا', 'کجا', 'کدام', 'چگونه', 'چطوری', 'می شود', 'میشه', 'تحلیل',
+            'explain', 'why', 'how', 'what', 'analysis', 'analyze', 'report'
+        ]
+        for marker in question_markers:
+            if marker in user_query:
+                return 'specialized'
+        lower_query = user_query.lower()
+        if any(keyword in user_query or keyword in lower_query for keyword in question_keywords):
+            return 'specialized'
+
         casual_patterns = [
             'hello', 'hi', 'hey', 'salam', 'how are you', 'what\'s up', 
             'good morning', 'good evening', 'thanks', 'thank you',
