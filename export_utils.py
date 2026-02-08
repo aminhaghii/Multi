@@ -160,7 +160,7 @@ def generate_html(chat_history: List[Dict]) -> str:
                     verified = '✓' if metadata['verified'] else '✗'
                     html_out += f'            <p><strong>Verified:</strong> {verified}</p>\n'
                 if 'sources' in metadata:
-                    html_out += f'            <p><strong>Sources:</strong> {metadata["sources"]}</p>\n'
+                    html_out += f'            <p><strong>Sources:</strong> {html.escape(str(metadata["sources"]))}</p>\n'
                 html_out += '        </div>\n'
             
             html_out += '    </div>\n'

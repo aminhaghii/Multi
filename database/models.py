@@ -7,8 +7,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional, List, Dict, Any
 from sqlalchemy import create_engine, Column, String, Text, Integer, Float, Boolean, DateTime, ForeignKey, JSON, Enum as SQLEnum
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship, sessionmaker
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from sqlalchemy.dialects.sqlite import JSON as SQLiteJSON
 
 Base = declarative_base()

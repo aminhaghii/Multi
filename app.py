@@ -126,10 +126,6 @@ with st.sidebar:
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error: {e}")
-                    finally:
-                        # BUG-026 FIX: Clean up temp file
-                        if os.path.exists(temp_path):
-                            os.remove(temp_path)
     
     elif upload_type == "Image":
         uploaded_image = st.file_uploader(
@@ -173,10 +169,6 @@ with st.sidebar:
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error: {e}")
-                    finally:
-                        # BUG-026 FIX: Clean up temp file
-                        if os.path.exists(img_path):
-                            os.remove(img_path)
     
     elif upload_type == "Voice":
         uploaded_audio = st.file_uploader(
@@ -221,10 +213,6 @@ with st.sidebar:
                             st.error(transcription)
                     except Exception as e:
                         st.error(f"Error: {e}")
-                    finally:
-                        # BUG-026 FIX: Clean up temp file
-                        if os.path.exists(audio_path):
-                            os.remove(audio_path)
     
     st.markdown("---")
     if st.button("Clear Chat History"):

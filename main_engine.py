@@ -3,6 +3,7 @@ from llm_client import LLMClient
 from vector_store import VectorStore
 from cache import get_cache
 from typing import Dict, Any, Optional, Callable
+import html
 import time
 import re
 import threading
@@ -526,7 +527,7 @@ class Orchestrator:
     
     def _format_as_html_report(self, content: str, query: str) -> str:
         """Format answer as HTML report for Canvas"""
-        html = f"""
+        html_report = f"""
         <!DOCTYPE html>
         <html>
         <head>
@@ -544,7 +545,7 @@ class Orchestrator:
         <body>
             <h1>Research Report</h1>
             <div class="metadata">
-                <strong>Query:</strong> {query}
+                <strong>Query:</strong> {html.escape(query)}
             </div>
             <div class="content">
                 {self._convert_to_html_paragraphs(content)}
@@ -552,7 +553,7 @@ class Orchestrator:
         </body>
         </html>
         """
-        return html
+        return html_report
     
     def _convert_to_html_paragraphs(self, text: str) -> str:
         """Convert plain text to HTML paragraphs"""
@@ -560,12 +561,14 @@ class Orchestrator:
         html_parts = []
         for p in paragraphs:
             if p.strip():
+                # Escape HTML entities first to prevent XSS
+                p_escaped = html.escape(p.strip())
                 # Check if it's a heading
-                if p.startswith('##'):
-                    html_parts.append(f'<h2>{p.replace("##", "").strip()}</h2>')
+                if p_escaped.startswith('##'):
+                    html_parts.append(f'<h2>{p_escaped.replace("##", "").strip()}</h2>')
                 else:
                     # Convert **bold** to <strong>bold</strong> using regex
-                    p_html = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', p)
+                    p_html = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', p_escaped)
                     html_parts.append(f'<p>{p_html}</p>')
         return '\n'.join(html_parts)
     

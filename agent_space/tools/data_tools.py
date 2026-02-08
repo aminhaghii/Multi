@@ -43,7 +43,9 @@ class DataAnalyzer:
         
         try:
             if isinstance(data_source, str):
-                file_path = WORKSPACE_ROOT / data_source
+                file_path = (WORKSPACE_ROOT / data_source).resolve()
+                if not str(file_path).startswith(str(WORKSPACE_ROOT.resolve())):
+                    return {"success": False, "error": "Access denied: path outside workspace"}
                 if not file_path.exists():
                     return {"success": False, "error": f"File not found: {data_source}"}
                 
@@ -215,7 +217,8 @@ class DataTransformer:
                 elif t_type == "add_column":
                     name = params.get("name")
                     expression = params.get("expression")
-                    df[name] = eval(expression, {"df": df, "np": np, "pd": pd})
+                    # Use pd.eval for safe expression evaluation (no arbitrary code)
+                    df[name] = pd.eval(expression, local_dict={"df": df}, engine="python")
             
             return {
                 "success": True,
@@ -241,7 +244,9 @@ class CSVHandler:
             return {"success": False, "error": "pandas not available"}
         
         try:
-            file_path = WORKSPACE_ROOT / path
+            file_path = (WORKSPACE_ROOT / path).resolve()
+            if not str(file_path).startswith(str(WORKSPACE_ROOT.resolve())):
+                return {"success": False, "error": "Access denied: path outside workspace"}
             df = pd.read_csv(file_path, nrows=MAX_ROWS, **kwargs)
             
             return {
@@ -261,7 +266,10 @@ class CSVHandler:
         
         try:
             df = pd.DataFrame(data)
-            file_path = WORKSPACE_ROOT / "output" / path
+            output_base = (WORKSPACE_ROOT / "output").resolve()
+            file_path = (output_base / path).resolve()
+            if not str(file_path).startswith(str(output_base)):
+                return {"success": False, "error": "Access denied: path outside output directory"}
             file_path.parent.mkdir(parents=True, exist_ok=True)
             df.to_csv(file_path, index=False, **kwargs)
             

@@ -34,7 +34,46 @@ except ImportError as e:
     SESSION_SUPPORT = False
     session_manager = None
 
-app = FastAPI(title="Agentic Research Assistant API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan: initialize on startup, cleanup on shutdown."""
+    global llm_client, vector_store, processor, orchestrator, image_captioner, voice_transcriber, cache
+
+    llm_client = LLMClient(base_url="http://127.0.0.1:8080")
+    vector_store = VectorStore(persist_directory="./faiss_db")
+    processor = DocumentProcessor(vector_store, chunk_size=800, chunk_overlap=160)
+    cache = get_cache()
+    cache.set_vector_store(vector_store)
+
+    try:
+        from image_captioner import ImageCaptioner
+        image_captioner = ImageCaptioner()
+    except Exception as e:
+        print(f"Warning: Could not load image captioner: {e}")
+        image_captioner = None
+
+    try:
+        from voice_transcriber import VoiceTranscriber
+        voice_transcriber = VoiceTranscriber(model_size="tiny")
+    except Exception as e:
+        print(f"Warning: Could not load voice transcriber: {e}")
+        voice_transcriber = None
+
+    orchestrator = Orchestrator(
+        llm_client=llm_client,
+        vector_store=vector_store,
+        image_captioner=image_captioner,
+        max_refinement_iterations=2,
+        confidence_threshold=0.7
+    )
+
+    yield  # Application runs here
+
+    # Shutdown cleanup (if needed in the future)
+
+
+app = FastAPI(title="Agentic Research Assistant API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -92,38 +131,6 @@ class DocumentNode(BaseModel):
     name: str
     type: str
     metadata: dict
-
-@app.on_event("startup")
-async def startup():  # TODO: migrate to lifespan context manager when upgrading FastAPI
-    global llm_client, vector_store, processor, orchestrator, image_captioner, voice_transcriber, cache
-    
-    llm_client = LLMClient(base_url="http://127.0.0.1:8080")
-    vector_store = VectorStore(persist_directory="./faiss_db")
-    processor = DocumentProcessor(vector_store, chunk_size=800, chunk_overlap=160)
-    cache = get_cache()
-    cache.set_vector_store(vector_store)
-    
-    try:
-        from image_captioner import ImageCaptioner
-        image_captioner = ImageCaptioner()
-    except Exception as e:
-        print(f"Warning: Could not load image captioner: {e}")
-        image_captioner = None
-    
-    try:
-        from voice_transcriber import VoiceTranscriber
-        voice_transcriber = VoiceTranscriber(model_size="tiny")
-    except Exception as e:
-        print(f"Warning: Could not load voice transcriber: {e}")
-        voice_transcriber = None
-    
-    orchestrator = Orchestrator(
-        llm_client=llm_client,
-        vector_store=vector_store,
-        image_captioner=image_captioner,
-        max_refinement_iterations=2,
-        confidence_threshold=0.7
-    )
 
 @app.get("/api/health")
 async def health():
@@ -299,7 +306,7 @@ async def chat_stream(request: ChatRequest):
     import asyncio
 
     async def event_generator():
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         async_queue: asyncio.Queue = asyncio.Queue()
         
         def progress_callback(event):
@@ -396,6 +403,10 @@ async def upload_pdf(file: UploadFile = File(...)):
     file_path = f"./data/{safe_filename}"
     
     content = await file.read()
+    file_size_mb = len(content) / (1024 * 1024)
+    if file_size_mb > MAX_FILE_SIZE_MB:
+        raise HTTPException(status_code=400, detail=f"File too large. Maximum size is {MAX_FILE_SIZE_MB}MB")
+    
     with open(file_path, "wb") as f:
         f.write(content)
     
@@ -507,7 +518,10 @@ async def upload_image(file: UploadFile = File(...)):
             "page": 0,
             "chunk_index": 0,
             "file_hash": file_hash,
-            "images": file_path
+            "images": file_path,
+            "has_image": True,
+            "image_path": file_path,
+            "caption": caption
         }
         
         vector_store.add_documents([text_with_caption], [metadata], [file_hash])
@@ -566,7 +580,10 @@ async def upload_audio(file: UploadFile = File(...)):
             "page": 0,
             "chunk_index": 0,
             "file_hash": file_hash,
-            "images": ""
+            "images": "",
+            "has_image": False,
+            "image_path": "",
+            "caption": ""
         }
         
         vector_store.add_documents([text_with_transcription], [metadata], [file_hash])
@@ -825,6 +842,13 @@ async def favicon():
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 # SECURITY: /data directory no longer served as static files to prevent unauthorized access to uploads
+
+# Register agent-space routes (tool execution, capabilities)
+try:
+    from api.routes.agent_space import router as agent_space_router
+    app.include_router(agent_space_router)
+except ImportError as e:
+    print(f"Warning: Agent space routes not available: {e}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

@@ -35,6 +35,7 @@ class ResponseCache:
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
         with sqlite3.connect(self.db_path) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS cached_responses (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,

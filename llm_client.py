@@ -2,7 +2,6 @@ import os
 import requests
 import json
 import time
-import asyncio  # BUG-013 FIX: For async operations
 from pathlib import Path
 
 class LLMClient:

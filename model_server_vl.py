@@ -10,8 +10,7 @@ from PIL import Image
 import io
 import base64
 import uvicorn
-
-app = FastAPI(title="MiMo-VL Multimodal Server")
+from contextlib import asynccontextmanager
 
 class GenerationRequest(BaseModel):
     prompt: str
@@ -30,21 +29,23 @@ device = None
 # MiMo-VL repo with processor/tokenizer included
 MODEL_ID = "XiaomiMiMo/MiMo-VL-7B-RL-2508"
 
-@app.on_event("startup")
-async def load_model():
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Load model on startup."""
     global model, processor, device
-    
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
     print(f"Loading MiMo-VL model: {MODEL_ID}")
     print("This may take several minutes on first run...")
-    
+
     try:
         processor = AutoProcessor.from_pretrained(
             MODEL_ID,
             trust_remote_code=True
         )
-        
+
         if device == "cuda":
             quantization_config = BitsAndBytesConfig(
                 load_in_4bit=True,
@@ -52,7 +53,7 @@ async def load_model():
                 bnb_4bit_use_double_quant=True,
                 bnb_4bit_quant_type="nf4"
             )
-            
+
             model = AutoModelForCausalLM.from_pretrained(
                 MODEL_ID,
                 quantization_config=quantization_config,
@@ -65,13 +66,18 @@ async def load_model():
                 torch_dtype=torch.float32,
                 trust_remote_code=True
             ).to(device)
-        
+
         print("MiMo-VL model loaded successfully!")
-        
+
     except Exception as e:
         print(f"Error loading model: {e}")
         model = None
         processor = None
+
+    yield  # Application runs here
+
+
+app = FastAPI(title="MiMo-VL Multimodal Server", lifespan=lifespan)
 
 @app.get("/health")
 async def health_check():
@@ -114,13 +120,17 @@ async def generate_completion(request: GenerationRequest):
         inputs = {k: v.to(model.device) for k, v in inputs.items()}
         
         with torch.no_grad():
-            outputs = model.generate(
+            gen_kwargs = {
                 **inputs,
-                max_new_tokens=request.max_tokens,
-                temperature=request.temperature,
-                do_sample=True,
-                pad_token_id=processor.tokenizer.eos_token_id
-            )
+                "max_new_tokens": request.max_tokens,
+                "pad_token_id": processor.tokenizer.eos_token_id,
+            }
+            if request.temperature > 0:
+                gen_kwargs["do_sample"] = True
+                gen_kwargs["temperature"] = request.temperature
+            else:
+                gen_kwargs["do_sample"] = False
+            outputs = model.generate(**gen_kwargs)
         
         input_len = inputs["input_ids"].shape[1]
         generated_tokens = outputs[0][input_len:]

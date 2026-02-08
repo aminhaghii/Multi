@@ -362,7 +362,11 @@ This is an image/figure that can be displayed with markdown."""
                 "page": 0,
                 "chunk_index": chunk_idx,
                 "file_hash": file_hash,
-                "type": "word"
+                "type": "word",
+                "images": "",
+                "has_image": False,
+                "image_path": "",
+                "caption": ""
             }
             all_texts.append(chunk)
             all_metadatas.append(metadata)
@@ -394,7 +398,11 @@ This is an image/figure that can be displayed with markdown."""
                 "page": 0,
                 "chunk_index": chunk_idx,
                 "file_hash": file_hash,
-                "type": "markdown"
+                "type": "markdown",
+                "images": "",
+                "has_image": False,
+                "image_path": "",
+                "caption": ""
             }
             all_texts.append(chunk)
             all_metadatas.append(metadata)
@@ -426,7 +434,11 @@ This is an image/figure that can be displayed with markdown."""
                 "page": 0,
                 "chunk_index": chunk_idx,
                 "file_hash": file_hash,
-                "type": "text"
+                "type": "text",
+                "images": "",
+                "has_image": False,
+                "image_path": "",
+                "caption": ""
             }
             all_texts.append(chunk)
             all_metadatas.append(metadata)
@@ -465,7 +477,11 @@ This is an image/figure that can be displayed with markdown."""
                 "page": 0,
                 "chunk_index": chunk_idx,
                 "file_hash": file_hash,
-                "type": "rtf"
+                "type": "rtf",
+                "images": "",
+                "has_image": False,
+                "image_path": "",
+                "caption": ""
             }
             all_texts.append(chunk)
             all_metadatas.append(metadata)

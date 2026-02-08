@@ -125,32 +125,33 @@ class VectorStore:
             self._save()
     
     def search(self, query: str, k: int = 5) -> Dict[str, Any]:
-        if len(self.documents) == 0:
-            return {
-                "documents": [],
-                "metadatas": [],
-                "distances": [],
-                "ids": []
-            }
-        
-        query_embedding = self._generate_embedding(query).reshape(1, -1)
-        faiss.normalize_L2(query_embedding)
-        
-        k = min(k, len(self.documents))
-        distances, indices = self.index.search(query_embedding, k)
-        
-        # Filter out invalid indices (-1 returned by FAISS when fewer results than k)
-        results_docs = []
-        results_meta = []
-        results_ids = []
-        results_distances = []
-        
-        for idx, dist in zip(indices[0], distances[0]):
-            if idx >= 0 and idx < len(self.documents):
-                results_docs.append(self.documents[idx])
-                results_meta.append(self.metadatas[idx])
-                results_ids.append(self.ids[idx])
-                results_distances.append(float(dist))
+        with self._lock:
+            if len(self.documents) == 0:
+                return {
+                    "documents": [],
+                    "metadatas": [],
+                    "distances": [],
+                    "ids": []
+                }
+            
+            query_embedding = self._generate_embedding(query).reshape(1, -1)
+            faiss.normalize_L2(query_embedding)
+            
+            k = min(k, len(self.documents))
+            distances, indices = self.index.search(query_embedding, k)
+            
+            # Filter out invalid indices (-1 returned by FAISS when fewer results than k)
+            results_docs = []
+            results_meta = []
+            results_ids = []
+            results_distances = []
+            
+            for idx, dist in zip(indices[0], distances[0]):
+                if idx >= 0 and idx < len(self.documents):
+                    results_docs.append(self.documents[idx])
+                    results_meta.append(self.metadatas[idx])
+                    results_ids.append(self.ids[idx])
+                    results_distances.append(float(dist))
         
         return {
             "documents": results_docs,
@@ -170,17 +171,19 @@ class VectorStore:
             }, f, ensure_ascii=False, indent=2)
     
     def delete_collection(self):
-        if os.path.exists(self.index_path):
-            os.remove(self.index_path)
-        if os.path.exists(self.metadata_path):
-            os.remove(self.metadata_path)
-        self.index = faiss.IndexFlatIP(self.dimension)
-        self.documents = []
-        self.metadatas = []
-        self.ids = []
+        with self._lock:
+            if os.path.exists(self.index_path):
+                os.remove(self.index_path)
+            if os.path.exists(self.metadata_path):
+                os.remove(self.metadata_path)
+            self.index = faiss.IndexFlatIP(self.dimension)
+            self.documents = []
+            self.metadatas = []
+            self.ids = []
     
     def get_collection_count(self) -> int:
-        return len(self.documents)
+        with self._lock:
+            return len(self.documents)
     
     def delete_by_file_hash(self, file_hash: str) -> int:
         """Delete documents by file hash efficiently with atomic operation (BUG-008 FIX)"""
@@ -223,4 +226,5 @@ class VectorStore:
     
     def get_unique_sources(self) -> List[str]:
         """Get list of unique source files"""
-        return list(set(meta.get('source', '') for meta in self.metadatas))
+        with self._lock:
+            return list(set(meta.get('source', '') for meta in self.metadatas))

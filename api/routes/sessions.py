@@ -10,7 +10,6 @@ import sys
 sys.path.insert(0, str(__file__).replace('\\', '/').rsplit('/', 3)[0])
 
 from core.session_manager import session_manager
-from history.storage.chat_store import chat_store
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -75,7 +74,7 @@ async def list_sessions(
 async def get_recent_sessions(limit: int = Query(20, ge=1, le=50)):
     """Get recently active sessions"""
     try:
-        return chat_store.get_recent_sessions(limit=limit)
+        return session_manager.list_sessions(limit=limit)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -176,7 +175,9 @@ async def get_session_messages(
 async def get_session_summary(session_id: str):
     """Get session summary statistics"""
     try:
-        summary = chat_store.get_session_summary(session_id)
-        return summary
+        summary = session_manager.generate_summary(session_id)
+        if summary is None:
+            raise HTTPException(status_code=404, detail="Session not found or no messages")
+        return {"session_id": session_id, "summary": summary}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

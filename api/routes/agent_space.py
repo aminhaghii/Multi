@@ -163,10 +163,25 @@ async def get_workspace_info():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class CheckPermissionRequest(BaseModel):
+    category: str
+    name: str
+    file_size: Optional[int] = None
+    extension: Optional[str] = None
+    duration: Optional[float] = None
+
+
 @router.post("/check-permission")
-async def check_permission(category: str, name: str, **kwargs):
+async def check_permission(request: CheckPermissionRequest):
     """Check if an action is permitted"""
-    allowed, reason = capability_registry.check_permission(category, name, **kwargs)
+    extra = {}
+    if request.file_size is not None:
+        extra["file_size"] = request.file_size
+    if request.extension is not None:
+        extra["extension"] = request.extension
+    if request.duration is not None:
+        extra["duration"] = request.duration
+    allowed, reason = capability_registry.check_permission(request.category, request.name, **extra)
     return {
         "allowed": allowed,
         "reason": reason
