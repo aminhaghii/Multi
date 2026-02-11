@@ -215,8 +215,6 @@ class VectorStore:
             chunk_count = len(self.documents)
         return {"document_count": doc_count, "chunk_count": chunk_count}
     
-<<<<<<< C:/Users/aminh/OneDrive/Desktop/Multi_agent/vector_store.py
-=======
     def get_snapshot(self) -> Dict[str, list]:
         """Return a thread-safe shallow copy of documents and metadatas."""
         with self._lock:
@@ -225,8 +223,7 @@ class VectorStore:
                 "metadatas": list(self.metadatas),
                 "ids": list(self.ids)
             }
-    
->>>>>>> C:/Users/aminh/.windsurf/worktrees/Multi_agent/Multi_agent-7a8feee4/vector_store.py
+
     def delete_by_file_hash(self, file_hash: str) -> int:
         """Delete documents by file hash efficiently with atomic operation (BUG-008 FIX)"""
         with self._lock:

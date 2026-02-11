@@ -26,19 +26,27 @@ class QueryUnderstandingAgent(BaseAgent):
         
         self.log(f"Analyzing query: {user_query[:100]}...")
         
-        prompt = f"""Analyze this query and extract:
-1. Intent (research/analytical/descriptive/comparison)
-2. Key concepts (list main topics)
-3. Expected answer type (factual/explanatory/listing)
-4. Expanded query terms (synonyms, related concepts)
-
-Query: {user_query}
-
-Respond in this exact format:
-Intent: [intent]
-Keywords: [keyword1, keyword2, keyword3]
-Answer Type: [type]
-Expanded Terms: [term1, term2, term3]"""
+        im_s = "<" + "|im_start|" + ">"
+        im_e = "<" + "|im_end|" + ">"
+        prompt = (
+            f"{im_s}system\n"
+            "You are a query analysis assistant. Extract structured information from the user query. "
+            "Always respond in the exact format requested. Do not explain.\n"
+            f"{im_e}\n"
+            f"{im_s}user\n"
+            "Analyze this query and extract:\n"
+            "1. Intent (research/analytical/descriptive/comparison)\n"
+            "2. Key concepts (list main topics)\n"
+            "3. Expected answer type (factual/explanatory/listing)\n"
+            "4. Expanded query terms (synonyms, related concepts for retrieval)\n\n"
+            f"Query: {user_query}\n\n"
+            "Respond in this exact format:\n"
+            "Intent: [intent]\n"
+            "Keywords: [keyword1, keyword2, keyword3]\n"
+            "Answer Type: [type]\n"
+            f"Expanded Terms: [term1, term2, term3]\n{im_e}\n"
+            f"{im_s}assistant\n"
+        )
 
         result = self.llm_client.generate(
             prompt=prompt,
@@ -87,7 +95,7 @@ Expanded Terms: [term1, term2, term3]"""
             "expanded_terms": expanded_terms,
             "all_search_terms": all_search_terms,
             "answer_type": answer_type,
-            "original_query": user_query
+            "parsed_query": user_query
         }
 
 
@@ -214,22 +222,29 @@ class ReasoningAgent(BaseAgent):
         except Exception as log_error:
             print(f"[ReasoningAgent] Could not write to log file: {log_error}")
     
-    def _simplified_reasoning(self, query: str, context_text: str) -> Optional[str]:
+    def _simplified_reasoning(self, query: str, context_text: str, original_lang: str = "en", original_query: str = "") -> Optional[str]:
         """Fallback: Use simplified prompt for reasoning."""
         self.log("Attempting simplified reasoning (Fallback Level 1)...")
         
-        prompt = f"""You are a research assistant. Based on the following context, answer the question.
-
-Context from documents:
-{context_text}
-
-Question: {query}
-
-Provide a clear, accurate answer based ONLY on the context above. 
-IMPORTANT: Add inline citations using [Source: filename, Page: X] format after each claim or fact.
-If the context doesn't contain enough information, say so.
-
-Answer:"""
+        im_s = "<" + "|im_start|" + ">"
+        im_e = "<" + "|im_end|" + ">"
+        
+        lang_note = ""
+        if original_lang != "en":
+            lang_note = f"\nRespond in the same language as the original question: {original_query}\n"
+        
+        prompt = (
+            f"{im_s}system\n"
+            "You are a research assistant. Answer based ONLY on the provided context. "
+            "Add citations: (Source: filename, Page: X).\n"
+            f"{lang_note}"
+            f"{im_e}\n"
+            f"{im_s}user\n"
+            f"Context:\n{context_text}\n\n"
+            f"Question: {query}\n"
+            f"{im_e}\n"
+            f"{im_s}assistant\n"
+        )
         
         result = self.llm_client.generate(
             prompt=prompt,
@@ -290,6 +305,8 @@ Please try:
     
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         user_query = context.get("user_query", "")
+        original_query = context.get("original_query", user_query)
+        original_lang = context.get("original_lang", "en")
         retrieved_docs = context.get("retrieved_docs", [])
         retrieved_metadata = context.get("retrieved_metadata", [])
         
@@ -316,6 +333,28 @@ Please try:
         # Collect image paths for response - ONLY from TOP 3 most relevant docs
         response_image_paths = []
         seen_paths = set()  # Track unique paths to avoid duplicates
+        
+        # Build language instruction for multilingual support
+        lang_names = {
+            'fa': 'Persian/Farsi', 'ar': 'Arabic', 'tr': 'Turkish',
+            'de': 'German', 'fr': 'French', 'es': 'Spanish',
+            'zh': 'Chinese', 'ja': 'Japanese', 'ko': 'Korean',
+            'ru': 'Russian', 'hi': 'Hindi', 'pt': 'Portuguese',
+        }
+        if original_lang != 'en':
+            lang_name = lang_names.get(original_lang, original_lang)
+            lang_instruction = (
+                f"\nCRITICAL LANGUAGE RULE: The user asked in {lang_name}. "
+                f"You MUST write your entire answer in {lang_name}. "
+                f"Keep technical terms, citations, filenames, and image markdown in English, "
+                f"but all explanations and sentences MUST be in {lang_name}.\n"
+                f"Original question in {lang_name}: {original_query}\n"
+            )
+        else:
+            lang_instruction = ""
+        
+        im_s = "<" + "|im_start|" + ">"
+        im_e = "<" + "|im_end|" + ">"
         
         if retrieved_docs:
             context_parts = []
@@ -363,56 +402,38 @@ Please try:
             
             context_text = "\n\n".join(context_parts)
             
-            prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-You are an expert technical assistant analyzing documents.
-Your goal is to answer questions strictly based on the provided context.
-
-CRITICAL INSTRUCTIONS:
-1. Answer ONLY using the provided Context.
-2. You MUST cite the source filename and page number for every key fact. Format: (Source: filename.pdf, Page: X)
-3. If the Context contains section numbers (e.g., 3.2.1, 5.4.1), cite them too.
-4. Use the exact technical terminology found in the text.
-5. If a retrieved chunk contains [[IMAGE_PATH: ...]], display it using ONLY this format: ![Description](path)
-   - The path MUST be EXACTLY as provided in [[IMAGE_PATH: ...]]
-   - DO NOT add any text after the image path
-   - DO NOT include citations or sources inside the image markdown
-6. If the answer is not in the context, state "Insufficient information provided."
-7. ALWAYS write citations AFTER images, never inside image markdown syntax.
-
----
-EXAMPLE (How to answer with citations and images):
-Context: "[[SOURCE: design_doc.pdf | PAGE: 15]]
-3.2.1 attitude and orbit control system (AOCS): functional chain of a satellite...
-[[IMAGE_PATH: /static/images/fig1.png]]"
-Question: "Define AOCS."
-Answer: "According to section 3.2.1, AOCS is defined as the functional chain of a satellite which encompasses attitude and orbit sensors, actuators, and algorithms. (Source: design_doc.pdf, Page: 15)
-
-![AOCS Diagram](/static/images/fig1.png)
-
-(Source: design_doc.pdf, Page: 15)"
-
-WRONG EXAMPLE (DO NOT DO THIS):
-![Figure](/static/images/fig1.png) (Source: doc.pdf, Page: 5)
-![Figure](/static/images/fig1.png**Sources:**)
-
-CORRECT EXAMPLE:
-![Figure](/static/images/fig1.png)
-
-(Source: doc.pdf, Page: 5)
----
-<|eot_id|><|start_header_id|>user<|end_header_id|>
-
-Context:
-{context_text}
-
-Question:
-{user_query}<|eot_id|><|start_header_id|>assistant<|end_header_id|>"""
+            prompt = (
+                f"{im_s}system\n"
+                "You are an expert research assistant analyzing documents.\n"
+                "Answer questions strictly based on the provided context.\n\n"
+                "INSTRUCTIONS:\n"
+                "1. Answer ONLY using the provided Context.\n"
+                "2. Cite the source filename and page for every key fact: (Source: filename.pdf, Page: X)\n"
+                "3. If the Context contains section numbers (e.g., 3.2.1), cite them.\n"
+                "4. Use exact technical terminology from the text.\n"
+                "5. If a chunk contains [[IMAGE_PATH: ...]], display it as: ![Description](path)\n"
+                "   - Use the path EXACTLY as given. Do NOT append text after the path.\n"
+                "   - Write citations AFTER images on a new line, never inside image markdown.\n"
+                "6. If the answer is not in the context, state: Insufficient information provided.\n"
+                f"{lang_instruction}"
+                f"{im_e}\n"
+                f"{im_s}user\n"
+                f"Context:\n{context_text}\n\n"
+                f"Question: {user_query}\n"
+                f"{im_e}\n"
+                f"{im_s}assistant\n"
+            )
         else:
-            prompt = f"""Question: {user_query}
-
-Think step-by-step and provide a clear, concise answer.
-
-Answer:"""
+            prompt = (
+                f"{im_s}system\n"
+                "You are a helpful research assistant. Think step-by-step.\n"
+                f"{lang_instruction}"
+                f"{im_e}\n"
+                f"{im_s}user\n"
+                f"{user_query}\n"
+                f"{im_e}\n"
+                f"{im_s}assistant\n"
+            )
         
         # Log prompt length for monitoring (remove verbose debug in production)
         self.log(f"Prompt length: {len(prompt)} chars")
@@ -451,7 +472,7 @@ Answer:"""
             # Attempt 2: Simplified reasoning
             if retrieved_docs:
                 context_text_simple = "\n".join(retrieved_docs[:2])
-                answer = self._simplified_reasoning(user_query, context_text_simple)
+                answer = self._simplified_reasoning(user_query, context_text_simple, original_lang, original_query)
                 if answer:
                     fallback_used = "simplified_reasoning"
                     self.log("Simplified reasoning succeeded")
@@ -535,24 +556,29 @@ class VerificationAgent(BaseAgent):
         
         context_text = "\n".join([doc[:1000] for doc in retrieved_docs[:3]])  # Increased for verification
         
-        prompt = f"""Verify if the answer is supported by the context and check citation accuracy.
-
-Context:
-{context_text}
-
-Question: {user_query}
-Answer: {answer}
-
-Verification checklist:
-1. Does the answer align with the context?
-2. Are citations present and accurate?
-3. Are technical terms used correctly?
-4. Is any information contradicted by the context?
-
-Response format:
-Confidence: [0.0-1.0]
-Citation Quality: [good/partial/missing]
-Issues: [list issues or "None"]"""
+        im_s = "<" + "|im_start|" + ">"
+        im_e = "<" + "|im_end|" + ">"
+        prompt = (
+            f"{im_s}system\n"
+            "You are a verification assistant. Check if an answer is supported by the context. "
+            "Respond ONLY in the exact format requested. Do not explain.\n"
+            f"{im_e}\n"
+            f"{im_s}user\n"
+            "Verify if the answer is supported by the context.\n\n"
+            f"Context:\n{context_text}\n\n"
+            f"Question: {user_query}\n"
+            f"Answer: {answer}\n\n"
+            "Checklist:\n"
+            "1. Does the answer align with the context?\n"
+            "2. Are citations present and accurate?\n"
+            "3. Are technical terms correct?\n"
+            "4. Is any information contradicted?\n\n"
+            "Response format:\n"
+            "Confidence: [0.0-1.0]\n"
+            "Citation Quality: [good/partial/missing]\n"
+            f"Issues: [list issues or None]\n{im_e}\n"
+            f"{im_s}assistant\n"
+        )
 
         result = self.llm_client.generate(
             prompt=prompt,

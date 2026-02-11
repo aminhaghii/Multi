@@ -99,24 +99,25 @@ capabilities:
         - "area"
 
   mini_app_creation:
-    enabled: true
-    max_apps_per_session: 10
-    allowed_frameworks:
-      - "vanilla_js"
-      - "react_simple"
-    max_code_size: "50KB"
-    auto_deploy: true
-    templates:
-      - "data_viewer"
-      - "chart_dashboard"
-      - "form_builder"
-      - "document_viewer"
-      - "comparison_tool"
-      - "timeline_viewer"
-      - "kanban_board"
-      - "code_playground"
-      - "quiz_app"
-      - "report_generator"
+    builder:
+      enabled: true
+      max_apps_per_session: 10
+      allowed_frameworks:
+        - "vanilla_js"
+        - "react_simple"
+      max_code_size: "50KB"
+      auto_deploy: true
+      templates:
+        - "data_viewer"
+        - "chart_dashboard"
+        - "form_builder"
+        - "document_viewer"
+        - "comparison_tool"
+        - "timeline_viewer"
+        - "kanban_board"
+        - "code_playground"
+        - "quiz_app"
+        - "report_generator"
 
   communication:
     send_notifications:

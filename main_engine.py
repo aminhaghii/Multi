@@ -187,16 +187,28 @@ class Orchestrator:
     
     def _handle_casual_query(self, user_query: str) -> Dict[str, Any]:
         """Handle casual/general queries - redirect to document-based questions"""
-        answer = (
-            "I am a specialized research assistant focused on analyzing uploaded documents. "
-            "Your question appears to be outside the scope of the knowledge base. "
-            "Please upload documents (PDF, images, or audio) and ask questions related to their content. "
-            "I can help you with:\n"
-            "• Extracting information from documents\n"
-            "• Answering questions about uploaded content\n"
-            "• Creating reports and summaries\n"
-            "• Analyzing data from your files"
-        )
+        # Detect if query is Persian to respond in the same language
+        if self._is_non_english(user_query):
+            answer = (
+                "من یک دستیار تحقیقاتی تخصصی هستم که بر تحلیل اسناد آپلود شده تمرکز دارم. "
+                "لطفاً اسناد خود را (PDF، تصویر یا صوت) آپلود کنید و سوالات مرتبط با محتوای آنها بپرسید. "
+                "من می‌توانم در موارد زیر کمک کنم:\n"
+                "• استخراج اطلاعات از اسناد\n"
+                "• پاسخ به سوالات درباره محتوای آپلود شده\n"
+                "• ایجاد گزارش و خلاصه\n"
+                "• تحلیل داده‌های فایل‌های شما"
+            )
+        else:
+            answer = (
+                "I am a specialized research assistant focused on analyzing uploaded documents. "
+                "Your question appears to be outside the scope of the knowledge base. "
+                "Please upload documents (PDF, images, or audio) and ask questions related to their content. "
+                "I can help you with:\n"
+                "• Extracting information from documents\n"
+                "• Answering questions about uploaded content\n"
+                "• Creating reports and summaries\n"
+                "• Analyzing data from your files"
+            )
         
         return {
             "success": True,

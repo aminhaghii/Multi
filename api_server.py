@@ -4,6 +4,7 @@ os.environ["TRANSFORMERS_NO_TF"] = "1"
 import faiss
 import numpy as np
 import hashlib
+import re
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException
@@ -383,6 +384,19 @@ async def chat_stream(request: ChatRequest):
 
 MAX_FILE_SIZE_MB = 50  # Maximum file size in MB
 
+def sanitize_error(e: Exception, generic_msg: str = "An internal error occurred") -> str:
+    """Sanitize exception messages to prevent leaking sensitive info."""
+    msg = str(e)
+    msg = re.sub(r'[A-Za-z]:\\[^\s:]+', '[path]', msg)
+    msg = re.sub(r'/[^\s:]+/[^\s:]+', '[path]', msg)
+    msg = re.sub(r'line \d+', 'line [N]', msg)
+    if len(msg) > 200:
+        msg = msg[:200] + '...'
+    sensitive = ['password', 'secret', 'key', 'token', 'credential', 'database']
+    if any(p in msg.lower() for p in sensitive):
+        return generic_msg
+    return msg or generic_msg
+
 def _sanitize_upload_filename(raw_filename: str) -> str:
     """Sanitize an uploaded filename: strip path components, allow only safe chars."""
     # Strip any directory components first (prevents path traversal)
@@ -427,11 +441,7 @@ async def upload_pdf(file: UploadFile = File(...)):
             "pages": result['num_pages']
         }
     except Exception as e:
-<<<<<<< C:/Users/aminh/OneDrive/Desktop/Multi_agent/api_server.py
-        raise HTTPException(status_code=500, detail=str(e))
-=======
         raise HTTPException(status_code=500, detail=sanitize_error(e))
->>>>>>> C:/Users/aminh/.windsurf/worktrees/Multi_agent/Multi_agent-7a8feee4/api_server.py
 
 @app.post("/api/upload/document")
 async def upload_document(file: UploadFile = File(...)):

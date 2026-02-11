@@ -3,10 +3,23 @@ import requests
 import json
 import time
 import base64
+import re
 from pathlib import Path
 
+# DeepSeek-R1-Distill-Qwen uses ChatML format stop tokens (NOT Llama-3 tokens)
+_IM_END = "<" + "|im_end|" + ">"
+_ENDOFTEXT = "<" + "|endoftext|" + ">"
+DEEPSEEK_STOP_TOKENS = [_IM_END, _ENDOFTEXT]
+
+
+def strip_think_tags(text: str) -> str:
+    """Strip DeepSeek-R1 reasoning <think>...</think> blocks from output."""
+    cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+    return cleaned if cleaned else text
+
+
 class LLMClient:
-    """LLM Client for Llama-3 GGUF model"""
+    """LLM Client for DeepSeek-R1-Distill-Qwen-14B GGUF model"""
     
     def __init__(self, base_url: str = "http://127.0.0.1:8080", multimodal_base_url: str = "http://127.0.0.1:8082"):
         self.base_url = base_url
@@ -21,12 +34,10 @@ class LLMClient:
         if not model_path or not Path(model_path).exists():
             project_root = Path(__file__).resolve().parent
             candidate_paths = [
-                Path("C:/Users/aminh/OneDrive/Desktop/Multi_agent/models/deepseek/DeepSeek-R1-Distill-Qwen-14B-IQ4_XS.gguf"),
-                project_root / "models/deepseek/DeepSeek-R1-Distill-Qwen-14B-IQ4_XS.gguf",
                 Path("C:/Users/aminh/OneDrive/Desktop/Multi_agent/models/deepseek/DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf"),
                 project_root / "models/deepseek/DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
-                project_root / "models/mimo-vl/MiMo-VL-7B-RL-2508.Q4_K_M.gguf",
-                project_root / "models/llama3/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf",
+                Path("C:/Users/aminh/OneDrive/Desktop/Multi_agent/models/deepseek/DeepSeek-R1-Distill-Qwen-14B-IQ4_XS.gguf"),
+                project_root / "models/deepseek/DeepSeek-R1-Distill-Qwen-14B-IQ4_XS.gguf",
             ]
             for candidate in candidate_paths:
                 candidate = Path(candidate)
@@ -54,7 +65,7 @@ class LLMClient:
             except ImportError:
                 print("llama-cpp-python not available, falling back to HTTP")
             except Exception as e:
-                print(f"Failed to load Llama-3 directly: {e}")
+                print(f"Failed to load model directly: {e}")
         
         return False
     
@@ -80,6 +91,8 @@ class LLMClient:
     def generate(self, prompt: str, max_tokens: int = 400, temperature: float = 0.6, top_p: float = 0.9, stop: list = None, max_retries: int = 3):
         """Generate response from LLM with retry logic and validation"""
         
+        effective_stop = stop if stop is not None else DEEPSEEK_STOP_TOKENS
+        
         # Use direct model if available
         if self.model:
             try:
@@ -87,10 +100,11 @@ class LLMClient:
                     prompt,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    stop=stop or ["<|eot_id|>", "<|end_of_text|>"]
+                    stop=effective_stop
                 )
                 
                 answer = response['choices'][0]['text'].strip()
+                answer = strip_think_tags(answer)
                 
                 # Validate response
                 if not answer or len(answer) < 20:
@@ -99,7 +113,7 @@ class LLMClient:
                 return {
                     "success": True,
                     "text": answer,
-                    "model": "DeepSeek-R1-Distill-Qwen-14B-IQ4_XS (direct)"
+                    "model": "DeepSeek-R1-Distill-Qwen-14B (direct)"
                 }
                 
             except Exception as e:
@@ -113,21 +127,20 @@ class LLMClient:
                     "prompt": prompt,
                     "max_tokens": max_tokens,
                     "temperature": temperature,
-                    "top_p": top_p
+                    "top_p": top_p,
+                    "stop": effective_stop
                 }
-                
-                if stop:
-                    payload["stop"] = stop
                 
                 response = requests.post(
                     f"{self.base_url}/completion",
                     json=payload,
-                    timeout=60  # Increased timeout for complex reasoning
+                    timeout=120
                 )
                 
                 if response.status_code == 200:
                     result = response.json()
                     text = result.get("content", "").strip()
+                    text = strip_think_tags(text)
                     
                     # Validate response
                     if not text or len(text) < 20:
@@ -136,7 +149,7 @@ class LLMClient:
                     return {
                         "success": True,
                         "text": text,
-                        "model": result.get("model", "unknown")
+                        "model": result.get("model", "DeepSeek-R1-Distill-Qwen-14B")
                     }
                 else:
                     if attempt < max_retries - 1:
